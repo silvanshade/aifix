@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "aifix",
+  "project_id": "c5f20e5b-194d-427f-9c33-bb20bd76ab30"
+}
