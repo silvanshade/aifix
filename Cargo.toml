@@ -10,8 +10,9 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.96.0"
 description = "Agent-first CLI adapter for normalizing and digesting tool diagnostics."
+homepage = "https://github.com/silvanshade/aifix"
+repository = "https://github.com/silvanshade/aifix"
 license = "Apache-2.0 OR Apache-2.0 WITH LLVM-exception"
-publish = false
 
 [workspace.dependencies]
 camino = { version = "1.2.2", default-features = false, features = ["serde1"] }
