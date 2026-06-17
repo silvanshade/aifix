@@ -44,9 +44,10 @@
 
 ### Benchmark and fuzz hooks
 
-* Added `benches/ingest.rs` with a Criterion benchmark named `clippy fixture parse and digest`.
+* Added `benches/ingest.rs` with a Criterion benchmark named `clippy fixture parse and digest` and recorded the first local baseline in `docs/METRICS.md`.
 * Added `fuzz/Cargo.toml` for an `aifix-fuzz` package and declared an `ingest` cargo-fuzz target.
 * Added `fuzz/fuzz_targets/ingest.rs` to feed arbitrary UTF-8-lossy input through all declared protocols and digest construction when parsing succeeds.
+* Added `docs/OPTIMIZATION.md` to separate measured performance knowledge, trend direction, and open optimization decisions from API behavior.
 
 ## designed direction
 
@@ -57,5 +58,5 @@
 ## open decision
 
 * No release history exists yet for published artifacts because publishing is disabled in the workspace.
-* No measured benchmark baseline has been accepted.
+* No benchmark regression threshold has been accepted.
 * No completion scripts are committed as release artifacts; they are generated on demand.

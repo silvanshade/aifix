@@ -12,7 +12,7 @@
 * Keep pipeline and batch modes rendering the same digest shape.
 * Expand adapter coverage only with fixture-backed cases for supported protocols: normalized aifix JSON, clippy/rustc compiler-message JSONL, TypeScript text, LSP diagnostic arrays and publishDiagnostics params, and nushell or generic text lines.
 * Keep batch profile defaults boring and explicit for Rust, TypeScript, Nushell, and custom commands.
-* Add benchmark baselines only after observed Criterion output exists.
+* Expand benchmark coverage from the observed ingest baseline before optimizing parser, digest, render, or batch capture internals.
 * Grow fuzz coverage from the current `ingest` target by preserving minimized crashing inputs as regression fixtures.
 * Decide whether generated shell completion scripts should become release artifacts or remain on-demand output.
 * Document package-name collision risk for `aifix` only as a naming concern; suggested alternatives remain diagflow, lintrelay, fixroute, and signalfix.

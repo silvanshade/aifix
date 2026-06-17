@@ -52,7 +52,7 @@ Out of scope for this crate:
 
 ## open decision
 
-* No measured ingestion timing baseline or CI threshold is recorded yet.
+* No CI regression threshold is recorded for the measured ingestion baseline.
 * No policy is recorded for when diagnostic suggestions are safe to apply.
 * No committed shell completion artifacts are maintained; completions are generated on demand by `aifix completions <shell>`.
 * The package name remains `aifix`; collision risk is documented as a naming concern, not a compatibility requirement.

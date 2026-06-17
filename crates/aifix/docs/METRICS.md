@@ -58,8 +58,14 @@ Benchmark function registered with Criterion:
 
 * `clippy fixture parse and digest`.
 
-No measured timing baseline is recorded here.
-This document should not invent local timings or thresholds without an observed benchmark result.
+Observed local baseline:
+
+| command                               | row                               | estimate                          |
+| ------------------------------------- | --------------------------------- | --------------------------------- |
+| `cargo bench -p aifix --bench ingest` | `clippy fixture parse and digest` | `[6.2256 µs 6.2491 µs 6.2730 µs]` |
+
+This is a 2026-06-17 local Criterion estimate for trend comparison only.
+It is not a generalized performance guarantee and not a regression threshold.
 
 ### Fuzzing
 
