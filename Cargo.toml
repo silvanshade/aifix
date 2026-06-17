@@ -9,6 +9,7 @@ members = ["crates/aifix"]
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.96.0"
+description = "Agent-first CLI adapter for normalizing and digesting tool diagnostics."
 license = "Apache-2.0 OR Apache-2.0 WITH LLVM-exception"
 publish = false
 
