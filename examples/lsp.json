@@ -1,0 +1,71 @@
+{
+  "jsonrpc": "2.0",
+  "method": "textDocument/publishDiagnostics",
+  "params": {
+    "uri": "file:///workspace/aifix/src/lib.rs",
+    "version": 8,
+    "diagnostics": [
+      {
+        "range": {
+          "start": { "line": 4, "character": 10 },
+          "end": { "line": 4, "character": 20 }
+        },
+        "severity": 1,
+        "code": "unresolved-import",
+        "source": "rust-analyzer",
+        "message": "unresolved import `crate::missing`",
+        "relatedInformation": [
+          {
+            "location": {
+              "uri": "file:///workspace/aifix/src/lib.rs",
+              "range": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 16 }
+              }
+            },
+            "message": "module declared here"
+          }
+        ],
+        "data": {
+          "suggestions": [
+            {
+              "message": "create module `missing` or remove the import",
+              "replacement": "mod missing;",
+              "applicability": "maybe-incorrect"
+            }
+          ]
+        }
+      },
+      {
+        "range": {
+          "start": { "line": 18, "character": 4 },
+          "end": { "line": 18, "character": 15 }
+        },
+        "severity": 2,
+        "code": "inactive-code",
+        "source": "rust-analyzer",
+        "message": "code is inactive due to #[cfg] directives",
+        "tags": [1]
+      },
+      {
+        "range": {
+          "start": { "line": 27, "character": 12 },
+          "end": { "line": 27, "character": 18 }
+        },
+        "severity": 3,
+        "code": "hint-unused-mut",
+        "source": "rust-analyzer",
+        "message": "variable does not need to be mutable",
+        "data": {
+          "suggestions": [
+            {
+              "message": "remove `mut`",
+              "replacement": "value",
+              "applicability": "machine-applicable"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

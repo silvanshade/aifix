@@ -1,0 +1,38 @@
+# Example project configuration for the aifix CLI.
+# Copy this file to `aifix.toml` at a project root to make these defaults apply
+# to `aifix pipeline` and `aifix batch` commands launched inside that tree.
+
+# Prefer compact JSON when sending digests directly to an LLM context window.
+default_format = "compact-json"
+
+# Let aifix infer the adapter unless a command overrides `--protocol`.
+default_protocol = "auto"
+
+# Keep examples small while preserving enough samples to show grouping behavior.
+max_diagnostics = 20
+
+[profiles.rust]
+argv = [
+  "cargo",
+  "clippy",
+  "--quiet",
+  "--message-format=json",
+  "--all-targets",
+  "--all-features",
+  "--",
+  "--cap-lints",
+  "warn",
+]
+protocol = "clippy-json"
+
+[profiles.typescript]
+argv = ["tsc", "--noEmit", "--pretty", "false"]
+protocol = "typescript-text"
+
+[profiles.nushell]
+argv = ["nu-lint"]
+protocol = "nushell-text"
+
+[profiles.custom]
+argv = ["./scripts/project-diagnostics"]
+protocol = "aifix-json"

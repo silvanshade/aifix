@@ -1,0 +1,182 @@
+#:tombi toml-version = "v1.0.0"
+#:schema tombi://www.schemastore.org/cargo.json
+
+[workspace]
+resolver = "3"
+members = ["crates/aifix"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96.0"
+license = "Apache-2.0 OR Apache-2.0 WITH LLVM-exception"
+publish = false
+
+[workspace.dependencies]
+camino = { version = "1.2.2", default-features = false, features = ["serde1"] }
+clap_complete = { version = "4.6.5", default-features = false }
+directories = { version = "6.0.0", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = [
+  "derive",
+  "std"
+] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+thiserror = { version = "2.0.18", default-features = false }
+toml = { version = "0.9", default-features = false, features = [
+  "parse",
+  "serde",
+  "std"
+] }
+
+[workspace.dependencies.clap]
+version = "4.6.1"
+default-features = false
+features = ["derive", "error-context", "help", "std", "usage"]
+
+[workspace.dependencies.criterion]
+version = "0.8.2"
+default-features = false
+features = ["cargo_bench_support"]
+
+[workspace.lints.clippy]
+# all = { correctness, suspicious, style, complexity, perf }
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+style = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+
+# nursery
+missing_const_for_fn = "allow"
+useless_let_if_seq = "allow"
+
+# pedantic
+too_many_lines = "allow"
+uninlined_format_args = "allow"
+
+# style
+needless_raw_string_hashes = "allow"
+needless_return = "allow"
+
+# restriction
+alloc_instead_of_core = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+as_conversions = "deny"
+as_pointer_underscore = "deny"
+cfg_not_test = "deny"
+clone_on_ref_ptr = "deny"
+create_dir = "deny"
+dbg_macro = "deny"
+decimal_literal_representation = "deny"
+default_numeric_fallback = "deny"
+default_union_representation = "deny"
+deref_by_slicing = "deny"
+disallowed_script_idents = "deny"
+doc_include_without_cfg = "deny"
+doc_paragraphs_missing_punctuation = "deny"
+empty_drop = "deny"
+empty_enum_variants_with_brackets = "deny"
+empty_structs_with_brackets = "deny"
+error_impl_error = "deny"
+exhaustive_enums = "deny"
+exhaustive_structs = "deny"
+exit = "deny"
+field_scoped_visibility_modifiers = "deny"
+filetype_is_file = "deny"
+float_cmp_const = "deny"
+fn_to_numeric_cast_any = "deny"
+get_unwrap = "deny"
+if_then_some_else_none = "deny"
+impl_trait_in_params = "deny"
+indexing_slicing = "deny"
+infinite_loop = "deny"
+integer_division = "deny"
+iter_over_hash_type = "deny"
+large_include_file = "deny"
+let_underscore_must_use = "deny"
+lossy_float_literal = "deny"
+map_err_ignore = "deny"
+map_with_unused_argument_over_ranges = "deny"
+mem_forget = "deny"
+missing_assert_message = "deny"
+missing_asserts_for_indexing = "deny"
+missing_docs_in_private_items = "deny"
+missing_inline_in_public_items = "deny"
+mixed_read_write_in_expression = "deny"
+mod_module_files = "deny"
+# module_name_repetitions = "deny"
+multiple_unsafe_ops_per_block = "deny"
+mutex_atomic = "deny"
+mutex_integer = "deny"
+non_zero_suggestions = "deny"
+panic = "deny"
+pathbuf_init_then_push = "deny"
+pattern_type_mismatch = "deny"
+precedence_bits = "deny"
+# print_stderr = "deny"
+# print_stdout = "deny"
+# pub_use = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+redundant_test_prefix = "deny"
+redundant_type_annotations = "deny"
+renamed_function_params = "deny"
+return_and_then = "deny"
+same_name_method = "deny"
+semicolon_outside_block = "deny"
+shadow_same = "deny"
+shadow_unrelated = "deny"
+# single_call_fn = "deny"
+single_char_lifetime_names = "deny"
+std_instead_of_alloc = "deny"
+std_instead_of_core = "deny"
+str_to_string = "deny"
+string_add = "deny"
+string_lit_chars_any = "deny"
+string_slice = "deny"
+suspicious_xor_used_as_pow = "deny"
+tests_outside_test_module = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_self_imports = "deny"
+unreachable = "deny"
+unused_result_ok = "deny"
+unused_trait_names = "deny"
+unwrap_in_result = "deny"
+use_debug = "deny"
+verbose_file_reads = "deny"
+
+[workspace.lints.rust]
+deprecated-safe = "deny"
+future-incompatible = "deny"
+keyword-idents = "deny"
+let-underscore = "deny"
+nonstandard-style = "deny"
+refining-impl-trait = "deny"
+rust-2018-compatibility = "deny"
+rust-2018-idioms = "deny"
+rust-2021-compatibility = "deny"
+rust-2024-compatibility = "deny"
+unknown-or-malformed-diagnostic-attributes = "deny"
+unused = "deny"
+warnings = "deny"
+
+[workspace.lints.rustdoc]
+all = "deny"
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+[profile.dist]
+inherits = "release"

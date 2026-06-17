@@ -1,0 +1,21 @@
+[package]
+name = "aifix-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[[bin]]
+bench = false
+doc = false
+name = "ingest"
+path = "fuzz_targets/ingest.rs"
+test = false
+
+[dependencies]
+aifix = { path = "../crates/aifix" }
+libfuzzer-sys = { version = "0.4", default-features = false }

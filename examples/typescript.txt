@@ -1,0 +1,4 @@
+src/app.ts(7,15): error TS2322: Type 'string' is not assignable to type 'number'.
+src/app.ts(12,9): warning TS6133: 'unused' is declared but its value is never read.
+src/components/Button.tsx(31,5): error TS2741: Property 'label' is missing in type '{ onClick: () => void; }' but required in type 'ButtonProps'.
+src/components/Button.tsx(31,5): error TS2741: Property 'label' is missing in type '{ onClick: () => void; }' but required in type 'ButtonProps'.
