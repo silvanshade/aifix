@@ -1,0 +1,102 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+#:tombi toml-version = "v1.0.0"
+
+[settings]
+activate_aggressive = true
+experimental = true
+env_shell_expand = true
+minimum_release_age = "1d"
+lockfile = true
+
+[settings.pipx]
+uvx = true
+
+[env]
+# Cargo resolves external subcommand binaries from PATH. Prefer the active
+# rustup toolchain so Homebrew/system Rust cannot shadow rust-toolchain.toml.
+_.path = [
+  "{{ exec(command='rustup=\"$(command -v rustup || echo \"$HOME/.cargo/bin/rustup\")\"; dirname \"$(\"$rustup\" which rustc)\"') }}",
+]
+
+[tasks."cargo:build"]
+description = "Build the Rust workspace"
+run = """
+cargo build --workspace --all-targets --all-features
+"""
+
+[tasks."cargo:clippy"]
+description = "Run Clippy over all workspace targets"
+run = """
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+"""
+
+[tasks."cargo:fmt"]
+description = "Format Rust sources"
+run = """
+cargo fmt --all
+"""
+
+[tasks."cargo:nextest"]
+description = "Run Rust tests with nextest"
+run = """
+cargo nextest run --workspace --all-targets --all-features
+"""
+
+[tasks.treefmt]
+description = "Format and lint supported project files"
+run = """
+treefmt
+"""
+
+[tasks."treefmt:check"]
+description = "Check supported project files without rewriting them"
+run = """
+treefmt --ci
+"""
+
+[tasks."docs:manifest-drift"]
+description = "Verify docs/MANIFEST.toml BLAKE3 hashes against documented files"
+run = """
+nu scripts/check-docs-manifest-drift.nu
+"""
+
+[tasks."docs:conflict-markers"]
+description = "Detect unresolved Git conflict markers in tracked text files"
+run = """
+nu scripts/check-conflict-markers.nu
+"""
+
+[tasks."changelog:generate"]
+description = "Generate CHANGELOG.md from conventional commits"
+run = """
+git-cliff --output CHANGELOG.md
+"""
+
+[tasks."changelog:check"]
+description = "Check that generated changelog content is current"
+run = """
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+git-cliff --output "$tmp"
+if [ -s "$tmp" ] && ! cmp --silent "$tmp" CHANGELOG.md; then
+  echo "CHANGELOG.md is out of date; run 'mise run changelog:generate'" >&2
+  exit 1
+fi
+if [ ! -s CHANGELOG.md ]; then
+  echo "CHANGELOG.md is empty" >&2
+  exit 1
+fi
+"""
+
+[tools]
+"cargo:b3sum" = "1.8.5"
+"cargo:cargo-careful" = "0.4.10"
+"cargo:cargo-llvm-cov" = "0.8.7"
+"cargo:cargo-nextest" = "0.9.137"
+"cargo:git-cliff" = "2.10.0"
+"cargo:nu" = "0.113.1"
+"cargo:rumdl" = "0.2.16"
+"cargo:typos-cli" = "1.47.2"
+"cargo:zizmor" = "1.25.2"
+"github:numtide/treefmt" = "2.5.0"
+"github:tombi-toml/tombi" = "1.1.3"

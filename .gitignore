@@ -4,3 +4,20 @@
 *.db
 .beads/*.jsonl
 .beads-credential-key
+
+# Rust and build artifacts
+target/
+dist/
+build/
+coverage/
+
+# Temporary and local-only files
+temp/
+tmp/
+.local/
+.notes/
+notes.local.*
+*.local.md
+
+# bv (beads viewer) local config and caches
+.bv/

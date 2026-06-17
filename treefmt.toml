@@ -1,0 +1,76 @@
+#:schema https://www.schemastore.org/treefmt.json
+#:tombi toml-version = "v1.0.0"
+
+# Keep generated, vendored, local, and bd-owned stores out of repository-wide
+# rewrites. Source, docs, examples, and fixtures remain visible to formatters.
+excludes = [
+  ".beads/**",
+  "build/**",
+  "coverage/**",
+  "dist/**",
+  "generated/**",
+  "target/**",
+  "temp/**",
+  "tmp/**",
+  "vendor/**",
+]
+
+[formatter."conflict-markers"]
+command = "nu"
+options = ["scripts/check-conflict-markers.nu"]
+includes = [
+  "*.json",
+  "*.lock",
+  "*.md",
+  "*.nu",
+  "*.rs",
+  "*.toml",
+  "*.txt",
+  "*.yaml",
+  "*.yml",
+]
+
+[formatter."docs-manifest-drift"]
+command = "nu"
+options = ["scripts/check-docs-manifest-drift.nu"]
+includes = ["docs/MANIFEST.toml"]
+
+[formatter."rumdl-format"]
+command = "rumdl"
+options = ["fmt"]
+includes = ["*.md"]
+
+[formatter."rumdl-verify"]
+command = "rumdl"
+options = ["check"]
+includes = ["*.md"]
+
+[formatter.rustfmt]
+command = "rustfmt"
+options = ["--edition", "2024", "--config", "skip_children=true"]
+includes = ["*.rs"]
+
+[formatter."tombi-format"]
+command = "tombi"
+options = ["format"]
+includes = ["*.toml"]
+
+[formatter."tombi-lint"]
+command = "tombi"
+options = ["lint", "--error-on-warnings"]
+includes = ["*.toml"]
+
+[formatter.typos]
+command = "typos"
+options = ["--write-changes", "--force-exclude"]
+includes = ["*"]
+
+[formatter.zizmor]
+command = "zizmor"
+options = ["--no-progress"]
+includes = [
+  ".github/actions/**/*.yaml",
+  ".github/actions/**/*.yml",
+  ".github/workflows/*.yaml",
+  ".github/workflows/*.yml",
+]
