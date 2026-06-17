@@ -1,126 +1,63 @@
-# agent guidance
+# Agent guidance
 
-This is the initial agent guidance for the aifix project.
+`aifix` is a Rust workspace for an agent-first diagnostic adapter.
+The CLI turns noisy compiler, linter, LSP, and text diagnostics into a normalized digest that coding agents can consume.
+It does not apply fixes.
 
-## Project Name
+The project name is still tentative until publication; keep the collision caveat in public docs.
 
-You are to implement a Rust CLI tool tentatively called aifix.
+## Workspace commands
 
-* Note the name is not stable until project is public.
-* Perform brief search for name suitability.
-* Suggest (but do not use) alternative names if necessary.
+Use the narrowest command that proves your change.
 
-## Project Scope
+* Format: `cargo fmt --all`
+* Build: `cargo build --workspace --all-targets`
+* Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+* Test: `cargo nextest run --workspace`
+* CLI smoke examples:
+  + `aifix pipeline --protocol clippy-json --format markdown --input crates/aifix/tests/fixtures/clippy.jsonl`
+  + `aifix explain rustc E0308`
+  + `aifix completions bash`
 
-aifix is an agent-first adapter that enables agents to more quickly and more accurately fix issues identified by tooling like linters, static analyzers, and LSP servers.
+Do not suppress warnings, skip tests, or narrow a verification claim beyond what you actually ran.
 
-### Concepts and Design
+## Rust design policy
 
-Initially aifix will be designed as a CLI adapter executed on-demand.
+* Keep the crate boring and explicit: adapters parse, the model normalizes, digest groups and deduplicates, renderers render, and the CLI dispatches.
+* Prefer clean cutovers.
+  Do not leave aliases, compatibility shims, or deprecated call paths unless an accepted ADR requires them.
+* Public and private Rust items should carry useful rustdoc explaining contract, failure modes, and panic behavior.
+* Design by contract: document preconditions, postconditions, recoverable errors, and panic expectations on nontrivial functions.
+* Panic policy: production paths return typed errors.
+  Panics are unacceptable except for debug assertions of internal invariants or test-only failures.
+* Preserve direct argv process execution in batch mode.
+  Never route tool commands through a shell.
+* Treat nonzero tool exits with parseable diagnostics as diagnostic results, not automatic `aifix` failures.
+* Reject invalid boundaries explicitly: malformed structured auto input must not fall back to generic text, non-UTF-8 batch extra args must fail, and batch capture stays bounded.
+* Do not allocate or copy unless it makes ownership or output necessary.
+  Avoid serializing raw payloads for identity or dedupe.
 
-A `datum` is any logic unit of information relevant for a particular tool interface.
+## Dependency policy
 
-Examples:
+Before adding or changing Rust dependencies, use the local skill at `.omp/skills/find-best-rust-crates`.
+Dependency choices must consider maintenance health, feature footprint, transitive size, security response, and contributor reputation.
+Prefer standard library and existing workspace dependencies when they are enough.
 
-* LSP diagnostics
-* lint suggestions
-* error codes
+## Documentation, ADRs, and knowledge discipline
 
-A `datum` may be atomic (primitive, such as an integer) or compound (a JSON object).
+* Root docs describe project behavior; crate-local docs under `crates/aifix/docs/` describe crate implementation details.
+* Record accepted architectural decisions in `docs/ADR.md`; crate-local decisions may also be mirrored in `crates/aifix/docs/ADR.md` when they affect crate maintenance.
+* Keep docs factual.
+  Do not describe placeholders, scaffolds, or planned work as implemented behavior.
+* Update changelogs when user-visible or maintainer-visible behavior changes.
+* After doc edits, refresh `docs/MANIFEST.toml` hashes with the project formatter/manifest workflow before final publication.
+* Track ongoing work and drift in beads.
+  Beads that implement or revise decisions should link the relevant ADR entry; ADRs record decisions, beads record execution state.
 
-The `data` emitted by a particular tool that `aifix` understands is expected to conform to some protocol.
+## Verification expectations
 
-#### Operation
+Every nontrivial change needs proof.
+Run the tests or smoke scenario that exercises the changed behavior, plus any directly affected unit or integration tests.
+If you cannot run a gate, state exactly why and what narrower evidence you obtained.
 
-aifix should offer two modes:
-
-* pipeline mode: tool data ingest, digest for llm agent
-* batch mode: invoke tools directly, tool data ingest, digest for llm agent
-
-Both modes should offer a concise and focused set of configuration options to control behavior, along with reading from both a user-level and project-level config file.
-
-#### Protocols and Formats
-
-Protocol preferences:
-
-* binary formats (faster, zero-copy)
-* structured textual formats (JSON)
-* ad-hoc formats with parse adapters (winnow based)
-
-#### Concrete Features
-
-* fix application prompting and guidance
-  + allow sub-agent to help schedule fixes
-  + allow sub-agent to explain (see explanation of tools below)
-* deduplication of tool data
-* minimization of tool data
-* grouping and prioritization of tool data
-* explanation of tool data
-  + Use existing docs where possible (rustc and clippy --explain)
-  + Allow tldr style templates otherwise
-  + Allow batched agent-advisor queries to explain specific issues
-    - Small/fast agent asks "what does X, Y, Z lint mean, with examples?"
-
-#### Inspiration
-
-The previous guidance is _suggested_ but the implementing agent is free to elaborate on the design and features according its own judgement.
-
-However, concrete inspiration should take strong design cues from existing user/agent design scripts at:
-
-* ~/Development/mach/.omp/
-* ~/Development/wyrd/scripts/
-* ~/Development/omp-prompt-ui/.omp/
-* ~/Development/omp-prompt-ui/scripts/
-
-The idea is to _generalize_ the patterns presented there, implement them more efficiently in Rust, make it more configurable and extensible, and provide some default tooling interface for at least the cases the user has already defined:
-
-* nushell
-* rust
-* typescript
-
-#### Task Execution
-
-The implementing agent is strongly advised to perform some research on prior art for such a tool before starting.
-Likely there has been _something_ beyond just the scripts mentioned previously.
-
-#### Project Conventions
-
-The agent should recall memories regarding user preferences for project configuration, then examine the following projects in detail and follow their overall structure as closely as possible (in order of preference):
-
-* ~/Development/omp-prompt-ui
-* ~/Deveopment/wyrd
-* ~/Development/mach
-
-Some specific points to follow:
-
-* Issue uses local beads tracking (already configured remote available at <https://www.dolthub.com/repositories/silvanshade/aifix-beads>)
-* Include _all_ of the project-level configuration files which are relevant to the project, examples:
-  + mise.toml (and all the other relevant toml files)
-  + treefmt.toml (follow the full configuration for relevant tools)
-  + rumdl.toml (follow the exact configuration)
-* Follow the ket documentation discipline (see ~/Development/wyrd/docs/KNOWLEDGE.md)
-* Follow all other CAPS-level .md documents where relevant
-* Maintain CHANGELOG.md (with git-cliff)
-* Maintain docs/ADR.md (with adrs) (use skill://architecture-decision-records to orient)
-* Follow the conventions around crates from ~/Development/mach/crates/**
-  + should produce all of the same docs as seen in ~/Development/mach/crates/ouroborosh-tree-sitter/docs/_.md
-* beads should reference ADRs, this should also potentially be folded into ket discipline if you can find a nice way
-* scan ~/Development/omp-prompt-ui beads for pending workflow tasks, and ~/Development/wyrd beads for past decisions to inform yourself
-* All source code should be fully documented (including rust private items) and follow a design-by-contract discipline:
-  + document pre and post conditions and failure mode or error behavior
-  + document panics
-  + follow mach and wyrd guidance on allowance for overriding lints
-  + use exact Rust configs where possible from mach
-* project should aim to include tests, close to as complete coverage as possible, fuzzing, benchmarks
-* include some informative tests and potentially some examples to run that demonstrate the tool working as expected.
-
-#### Deliverables
-
-- the working crate CLI tool, with some examples
-- a review pass with skill://improve-codebase-architecture followed by a refinement pass
-- a completed adversarial analysis followed by refinement pass
-- this AGENTS.md file replaced with a proper post-project-init guidance
-
-#### Notes
-
-The agent may invoke skill://grill-with-docs prior to implementation work if deemed useful
+When updating docs only, do not run formatters or gates unless explicitly requested; review the rendered content and keep it aligned with observed code and prior verification.

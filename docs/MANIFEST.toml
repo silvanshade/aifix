@@ -1,0 +1,31 @@
+# Documentation manifest for tracked project knowledge.
+# Paths are repository-relative and hashes are BLAKE3 digests.
+# The manifest does not list itself because the verifier hashes files directly.
+
+[[files]]
+path = "README.md"
+b3 = "4a95dbdb7573766a0274ced8ab83a276e76b35e7b1f6ba8791fe249139fb7999"
+
+[[files]]
+path = "ARCHITECTURE.md"
+b3 = "dcfb01563c04e352ec050e084a54c073866cfc669a73fb20c68c4dbf7fa81881"
+
+[[files]]
+path = "CONTRIBUTING.md"
+b3 = "631afd13f957b90369c13f7d502a98870c9b84c29e3fb99dc7082638a6a769c4"
+
+[[files]]
+path = "CHANGELOG.md"
+b3 = "be7b62cee8ff9168e6930c768143edc35ae11664fdb005aacafb6ae5b6d18f94"
+
+[[files]]
+path = "docs/ADR.md"
+b3 = "5c2a7f42a5a0039b596782620e877dbe4e21bbea2fb5c799fd7482e4af9005c1"
+
+[[files]]
+path = "docs/KNOWLEDGE.md"
+b3 = "760b1f05caa9eef1c2e9b5f606701d3c075a7392fb0695b0e13c8b57796266b1"
+
+[[files]]
+path = ".omp/skills/find-best-rust-crates/SKILL.md"
+b3 = "3e23594606195d975ffadf6173992f24c85b0429a565b429c8e64be500242f6e"
