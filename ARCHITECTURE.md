@@ -27,17 +27,22 @@ The internal model preserves the fields agents need to plan repairs:
 The model is intentionally smaller than SARIF and more stable than any one LSP payload.
 Adapters absorb tool-specific details so digesting, grouping, and rendering stay boring.
 
-## CLI surface
+## CLI and MCP surfaces
 
-The binary uses clap and clap-complete.
-Current commands are:
+The binary uses clap and clap-complete for human-invoked commands.
+Current CLI commands are:
 
 * `pipeline`: parse existing stdin or file diagnostics.
 * `batch`: run a configured or built-in profile, then parse captured output.
+* `mcp`: run the newline-delimited stdio MCP server.
 * `explain`: return deterministic local metadata for diagnostic code families.
 * `config paths`: print considered user and project config paths.
 * `completions <shell>`: write a shell completion script.
 
+The MCP server is the primary agent surface.
+It advertises tools for pipeline digests, batch digests, project-local diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance.
+Tool failures are returned as MCP tool results so one bad diagnostic payload does not terminate the stdio session.
+Cached fix replay uses direct `git apply` argv with patch text on stdin; no shell mediates patch checks or application.
 ## Adapters
 
 Adapters parse supported protocols into normalized diagnostics:
@@ -65,6 +70,17 @@ Deduplication excludes preserved raw JSON payload identity.
 Raw payloads remain available in full JSON output, but duplicate identity is based on normalized source, code, severity, message, spans, and suggestions.
 
 This keeps the output useful for agents without hiding that multiple files or severities are involved.
+
+## Project-local diagnostic cache
+
+MCP cache tools persist deterministic JSON at `.aifix/diagnostics.json` under the selected project root.
+The cache stores schema-versioned diagnostic signatures, already-surfaced diagnostics, cached patch text, and diagnostic-shape metrics.
+Stable signatures are computed from normalized source, code, severity, message, spans, and suggestions.
+They exclude preserved raw JSON payloads.
+
+The dedupe tool records emitted signatures and suppresses repeats on later calls.
+The fix-cache tools let an agent record a successful patch for a diagnostic signature, then later request suggestions, dry-run checks, or direct application when that signature recurs.
+The guidance tool aggregates source, severity, code, and signature counts into deterministic Markdown for per-project agent guidance.
 
 ## Renderers
 

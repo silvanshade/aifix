@@ -4,11 +4,11 @@
 
 [[files]]
 path = "README.md"
-b3 = "4a95dbdb7573766a0274ced8ab83a276e76b35e7b1f6ba8791fe249139fb7999"
+b3 = "a6f9f1f09e6b672a4f792fb69d741cca755ffaf7344e8d9b63f2abf7eefac286"
 
 [[files]]
 path = "ARCHITECTURE.md"
-b3 = "dcfb01563c04e352ec050e084a54c073866cfc669a73fb20c68c4dbf7fa81881"
+b3 = "4b72bc290ebc013d4df29a88831428e12b21c7ff77b1ff08ddbcba5e8b5d3706"
 
 [[files]]
 path = "CONTRIBUTING.md"
@@ -16,7 +16,7 @@ b3 = "631afd13f957b90369c13f7d502a98870c9b84c29e3fb99dc7082638a6a769c4"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "be7b62cee8ff9168e6930c768143edc35ae11664fdb005aacafb6ae5b6d18f94"
+b3 = "01f2a50cc6048bbdf451d9870a415c9f32d1102bc2f0af83a14dbeb36c80860c"
 
 [[files]]
 path = "docs/ADR.md"
@@ -24,7 +24,11 @@ b3 = "5c2a7f42a5a0039b596782620e877dbe4e21bbea2fb5c799fd7482e4af9005c1"
 
 [[files]]
 path = "docs/KNOWLEDGE.md"
-b3 = "760b1f05caa9eef1c2e9b5f606701d3c075a7392fb0695b0e13c8b57796266b1"
+b3 = "699f52db31ab3d99cfe00d91f7f9514aa455cea99980379f63fb1d8e70ba501d"
+
+[[files]]
+path = "AGENTS.md"
+b3 = "31d2ca3d52c782082be5f47abeb13e729fca323b022a73e8e600bc70715b7b01"
 
 [[files]]
 path = ".omp/skills/find-best-rust-crates/SKILL.md"

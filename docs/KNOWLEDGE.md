@@ -36,6 +36,19 @@ If code, docs, ADRs, or manifests disagree and the fix is not part of the curren
 When a bead implements, revises, or follows from an architectural decision, link it to the relevant ADR number.
 ADRs hold accepted decisions; beads hold execution state, blockers, and follow-up drift.
 
+## Diagnostic cache scope status
+
+Exact-signature diagnostic replay is implemented through the MCP surface and
+the project-local `.aifix/diagnostics.json` cache.
+This covers stable diagnostic signatures, cached patch reporting, replay
+suggestions, dry-run checks, direct `git apply` application, dedupe state, and
+deterministic diagnostic-shape guidance.
+
+Model-driven generalization is not implemented.
+Approximate syntax-aware matching, confidence-scored cache key families, and
+opt-in small-model repair generalization remain tracked work under bead
+`aifix-a02` until implemented or split into narrower beads.
+
 ## Project vs. contributor concerns
 
 Project knowledge is durable and shared: architecture, accepted decisions, workflow rules, public examples, and manifest entries.

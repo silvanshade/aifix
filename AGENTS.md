@@ -54,6 +54,16 @@ Prefer standard library and existing workspace dependencies when they are enough
 * Track ongoing work and drift in beads.
   Beads that implement or revise decisions should link the relevant ADR entry; ADRs record decisions, beads record execution state.
 
+## Wrap-up protocol
+
+When finishing a tracked work item, leave durable state instead of a loose working tree.
+
+* Make focused, granular commits for completed slices; keep each commit coherent and reviewable.
+* Include the required agent `Co-Authored-By` trailer on agent-created commits.
+* Close or update the relevant bead with observed verification, remaining scope, and links to durable docs or ADRs.
+* Push bead state to its Dolt remote when the bead database has a configured remote.
+* Finish with `git status --short` clean, or explicitly name any intentionally uncommitted user-owned changes.
+
 ## Verification expectations
 
 Every nontrivial change needs proof.

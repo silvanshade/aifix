@@ -1,7 +1,8 @@
 # aifix
 
-`aifix` is an agent-first Rust CLI for turning noisy tool diagnostics into a small, structured digest that an LLM coding agent can act on.
-It does not apply fixes.
+`aifix` is an agent-first Rust adapter for turning noisy tool diagnostics into a small, structured digest that an LLM coding agent can act on.
+CLI digest modes do not apply fixes.
+The MCP surface can replay explicitly recorded project-local patches when an agent requests that rerere-style behavior.
 It normalizes diagnostics, deduplicates exact semantic repeats, groups related issues, preserves tool invocation metadata, and renders the result for agent handoff.
 
 The project name is tentative.
@@ -37,6 +38,18 @@ Commands are executed without a shell.
 Extra arguments after `--` must be valid UTF-8, and each captured stream is bounded to 1 MiB.
 A nonzero tool exit can still produce a digest when diagnostics are parseable; unparsable nonzero output remains an `aifix` process error.
 
+### MCP mode
+
+MCP mode exposes the same diagnostic core over newline-delimited stdio JSON-RPC for Claude Code and other Model Context Protocol clients:
+
+```sh
+aifix mcp
+```
+
+The server advertises tools for pipeline and batch digests, diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance.
+Project-local cache state is stored in `.aifix/diagnostics.json`.
+Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
+
 ## Protocols and output formats
 
 Current input protocols:
@@ -62,12 +75,14 @@ Digest deduplication uses normalized semantic fields only; preserved raw payload
 ## Other commands
 
 ```sh
+aifix mcp
 aifix explain rustc E0308
 aifix explain clippy clippy::needless_borrow
 aifix config paths
 aifix completions bash
 ```
 
+`mcp` runs the agent-facing stdio server.
 `explain` is deterministic and local.
 It returns stable references and short summaries instead of performing network lookups.
 `completions` writes a shell completion script for any shell supported by clap-complete.
