@@ -84,7 +84,8 @@ fn main() -> ExitCode
 /// Preconditions: arguments must satisfy clap's generated parser invariants.
 /// Postconditions: dispatches exactly one subcommand implementation.
 /// Failure modes: propagates fallible subcommand errors; completion generation
-/// reports no recoverable errors through clap-complete. Panics: none.
+/// reports no recoverable errors through clap-complete. The MCP server owns
+/// its stdio loop until stdin closes. Panics: none.
 fn run() -> Result<(), CliError>
 {
     let cli = Cli::parse();
@@ -94,6 +95,7 @@ fn run() -> Result<(), CliError>
         | Command::Batch(command) => run_batch(command),
         | Command::Explain(command) => run_explain(command),
         | Command::Config(command) => run_config(&command),
+        | Command::Mcp => aifix::mcp::run_stdio_server().map_err(CliError::from),
         | Command::Completions(command) => {
             run_completions(&command);
             Ok(())
@@ -140,6 +142,8 @@ enum Command
     /// Inspect aifix configuration discovery details.
     #[command(subcommand)]
     Config(ConfigCommand),
+    /// Run the Model Context Protocol server over newline-delimited stdio.
+    Mcp,
     /// Generate a shell completion script on standard output.
     Completions(CompletionsCommand),
 }

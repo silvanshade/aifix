@@ -35,6 +35,17 @@ pub mod adapter;
 ///   type.
 /// - Panics: none.
 pub mod batch;
+/// Project-local diagnostic cache and fix replay support.
+///
+/// # Contract
+/// - Preconditions: callers provide a UTF-8 project root or allow the current
+///   directory to be used.
+/// - Postconditions: cache helpers persist deterministic JSON at
+///   `.aifix/diagnostics.json` and replay patches through direct `git` argv.
+/// - Failure modes: IO, JSON, process, and invalid-argument failures are
+///   returned through the crate error type.
+/// - Panics: none.
+pub mod cache;
 /// Configuration loading and validation.
 ///
 /// # Contract
@@ -71,6 +82,18 @@ pub mod error;
 /// - Failure modes: none for the module item itself.
 /// - Panics: none.
 pub mod explain;
+/// Newline-delimited stdio Model Context Protocol server.
+///
+/// # Contract
+/// - Preconditions: callers connect UTF-8 stdin and writable stdout following
+///   JSON-RPC 2.0 line framing.
+/// - Postconditions: server requests are answered with exactly one JSON object
+///   per response line and no stdout logging.
+/// - Failure modes: IO failures and response serialization errors are returned
+///   through the crate error type; tool failures are encoded as MCP tool
+///   results.
+/// - Panics: none.
+pub mod mcp;
 /// Normalized diagnostic data model.
 ///
 /// # Contract
@@ -92,3 +115,14 @@ pub mod model;
 ///   type.
 /// - Panics: none.
 pub mod render;
+/// Stable diagnostic signature construction and validation.
+///
+/// # Contract
+/// - Preconditions: callers provide normalized diagnostics or signature strings
+///   shaped as `aifix-v1-<16 hex primary>-<16 hex secondary>`.
+/// - Postconditions: signatures are deterministic over semantic diagnostic
+///   fields and exclude raw payloads from identity.
+/// - Failure modes: malformed signature strings return typed invalid-argument
+///   errors.
+/// - Panics: none.
+pub mod signature;
