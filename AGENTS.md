@@ -56,13 +56,16 @@ Prefer standard library and existing workspace dependencies when they are enough
 
 ## Wrap-up protocol
 
-When finishing a tracked work item, leave durable state instead of a loose working tree.
+When finishing bead-scoped work, leave durable state instead of a loose working tree.
 
-* Make focused, granular commits for completed slices; keep each commit coherent and reviewable.
-* Include the required agent `Co-Authored-By` trailer on agent-created commits.
-* Close or update the relevant bead with observed verification, remaining scope, and links to durable docs or ADRs.
-* Push bead state to its Dolt remote when the bead database has a configured remote.
-* Finish with `git status --short` clean, or explicitly name any intentionally uncommitted user-owned changes.
+* Commit each completed slice with a focused, coherent commit; include the required agent `Co-Authored-By` trailer on agent-created commits.
+* Finish with `git status --short` clean, except for explicitly identified user-owned changes or authorized uncommitted work.
+* Update affected docs, changelog entries, and `docs/MANIFEST.toml` hashes before publishing the final commit when the slice changes them.
+* Close a bead only when its full recorded scope is complete and verification is noted.
+* If scope remains, amend the bead with observed verification, unresolved work, and links to durable docs or ADRs.
+* Split follow-up beads before closing parent work so remaining scope stays tracked.
+* Push bead state with `bd dolt push` when the bead database has a configured remote.
+* Do not commit only when per-task user guidance forbids it, or when committing or recording durable state would be dangerous/destructive and the user has not authorized the override.
 
 ## Verification expectations
 

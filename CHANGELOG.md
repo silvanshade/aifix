@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 * Documented review hardening: bounded 1 MiB batch stream capture, strict non-UTF-8 batch argument rejection, structured-input rejection in `auto`, TypeScript and LSP adapter validation, direct argv execution, and digest deduplication that excludes raw payload identity.
 * Clarified that batch mode can return a digest for parseable diagnostics from a nonzero tool exit while still failing on unparsable nonzero output.
 * Clarified docs discipline around ADRs, beads, and manifest hash refresh after documentation changes.
+* Strengthened bead-scoped wrap-up guidance to require transactional commits, clean working trees, and explicit close/amend/split bead state.
 
 ### Notes
 
