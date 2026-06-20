@@ -45,9 +45,9 @@ suggestions, dry-run checks, direct `git apply` application, dedupe state, and
 deterministic diagnostic-shape guidance.
 
 Model-driven generalization is not implemented.
-Approximate syntax-aware matching, confidence-scored cache key families, and
-opt-in small-model repair generalization remain tracked work under bead
-`aifix-a02` until implemented or split into narrower beads.
+ADR-0008 accepts a conservative syntax-aware matching design with
+confidence-scored exact, same-node, nearby, and no-match outcomes, but that
+implementation remains pending in filed beads.
 
 ## Project vs. contributor concerns
 

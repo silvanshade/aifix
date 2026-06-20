@@ -16,15 +16,15 @@ b3 = "631afd13f957b90369c13f7d502a98870c9b84c29e3fb99dc7082638a6a769c4"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "760411fd174243a7ca67ab58d2261593fced5b14e72d6f73ddaa6a0198915952"
+b3 = "eea25ebe8743c8e340ba63120fd02f7002aa0a5ae32d786eaee0a1e27264d713"
 
 [[files]]
 path = "docs/ADR.md"
-b3 = "5c2a7f42a5a0039b596782620e877dbe4e21bbea2fb5c799fd7482e4af9005c1"
+b3 = "19d334b7b327ae7096b122f6be4bc9ec11c3cd5860ff823ef21ceef4b02a64e4"
 
 [[files]]
 path = "docs/KNOWLEDGE.md"
-b3 = "699f52db31ab3d99cfe00d91f7f9514aa455cea99980379f63fb1d8e70ba501d"
+b3 = "3ed4085aea6b5748810a79e9afda875763b78d34718c712f19133f3d6f58f690"
 
 [[files]]
 path = "AGENTS.md"

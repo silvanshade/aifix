@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 * Local Rust crate-selection skill adapted for `aifix` dependency decisions.
 * Rust workspace crate `crates/aifix` with CLI commands `pipeline`, `batch`, `explain`, `config paths`, and `completions <shell>`.
 * MCP stdio server exposing diagnostic pipeline, batch, dedupe, fix-cache replay, fix reporting, and learned guidance tools.
+* ADR-0008 documents the conservative syntax-aware fix-cache matching design.
 
 ### Changed
 

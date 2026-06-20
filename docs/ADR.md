@@ -155,3 +155,63 @@ Expose `aifix completions <shell>` using clap-complete and the generated clap co
 * Completion output tracks CLI enum and argument definitions.
 * Supported shells are the shells supported by clap-complete.
 * The repository does not maintain committed generated completion scripts yet.
+
+## ADR-0008: Gate syntax-aware cache replay by confidence
+
+Status: Accepted  
+Date: 2026-06-20
+
+### ADR-0008 context
+
+The diagnostic fix cache can already replay previously reported patches by exact diagnostic signature.
+That path is useful because it is deterministic: the cached diagnostic identity matches, the patch is checked by `git apply`, and application is explicit unless the caller asks for it.
+
+Future reuse across nearby diagnostics is attractive, but approximate matching can apply a good-looking patch to the wrong code after edits, formatter changes, line-ending drift, parser failure, or diagnostic wording changes.
+The project needs a design that records enough structure for later implementation without weakening the existing trusted exact-signature behavior.
+
+### ADR-0008 decision
+
+Keep exact diagnostic signatures as the only trusted unattended auto-apply path.
+An exact-signature hit remains eligible for the existing replay behavior, including explicit apply requests after `git apply` validation.
+
+Design any syntax-aware layer as a conservative suggestion layer before any model-driven generalization.
+It must rank matches by confidence:
+
+* `exact`: the exact diagnostic signature matches.
+* `same-node`: the normalized diagnostic family and stable syntax node context match with high confidence.
+* `nearby`: the diagnostic family matches and nearby syntax context, ancestors, siblings, tokens, or span deltas suggest a medium-confidence relation.
+* `no-match`: no safe syntax-aware relation was found.
+
+Only `exact` may preserve trusted auto-apply semantics.
+`same-node` and `nearby` hits are suggestions and dry-runs only unless the caller explicitly requests application; explicit application still goes through `git apply --check` or an equivalent git validation before any patch is applied.
+`no-match` produces no replay candidate.
+
+Parser and language support must be pluggable and bounded.
+Unknown languages, missing files, non-UTF-8 source, malformed spans, parser errors, excessive budget use, or unavailable parser dependencies degrade to exact-only behavior rather than guessing from raw diagnostic text.
+Implementation dependency selection, including any tree-sitter or Rowan-style green/red tree crate choice, is deferred to a future implementation bead.
+
+Use cache schema v2 for the syntax-aware design.
+Schema v2 should store versioned match-index records and fix-family records rather than treating raw diagnostic payloads as cache identity.
+The shape should include:
+
+* normalized diagnostic family: source, code, severity, and message family;
+* source file and recorded span/file identity;
+* exact diagnostic signature for exact replay;
+* syntax context fingerprint: stable node, ancestors, siblings, token context, and patch fingerprint/metadata;
+* byte and line deltas plus whitespace and line-ending accounting;
+* confidence floor and rank metadata;
+* audit metadata explaining why a candidate was exact, same-node, nearby, or no-match.
+
+Guardrails are part of the decision, not optional polish.
+The matcher must not silently apply approximate hits, must not use raw diagnostic payload identity as the primary key, must not hide parser degradation, and must keep old v1 entries exact-only until enriched.
+Audit output must report the selected confidence, degraded-parser or exact-only reasons, dry-run status, and git validation result.
+
+Fixtures for the eventual implementation must cover exact migration, same-node and nearby suggestions, no-match cases, whitespace and line-ending drift, node movement, malformed spans, missing files, parser errors, no approximate auto-apply, dry-run audit output, and deterministic cache JSON.
+
+### ADR-0008 consequences
+
+* Existing exact-signature replay remains trusted and deterministic.
+* Syntax-aware matching is accepted as a design, but implementation remains pending in filed beads.
+* Approximate cache hits can help agents find likely fixes without granting them unattended patch authority.
+* Parser failures and unsupported languages fail safe by falling back to exact-only matching.
+* Cache schema evolution has a target shape, while concrete parser dependency choices remain deferred.
