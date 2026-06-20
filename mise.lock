@@ -25,7 +25,7 @@ version = "0.113.1"
 backend = "cargo:nu"
 
 [[tools."cargo:rumdl"]]
-version = "0.2.17"
+version = "0.2.20"
 backend = "cargo:rumdl"
 
 [[tools."cargo:typos-cli"]]
