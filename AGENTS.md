@@ -64,6 +64,11 @@ When finishing bead-scoped work, leave durable state instead of a loose working 
 * Close a bead only when its full recorded scope is complete and verification is noted.
 * If scope remains, amend the bead with observed verification, unresolved work, and links to durable docs or ADRs.
 * Split follow-up beads before closing parent work so remaining scope stays tracked.
+* When partial work remains, make the remaining state epic-shaped: promote the current bead to an epic or attach it beneath a newly surfaced epic.
+* Add or update a roadmap bead under that epic that captures the intended sequence and acceptance boundaries.
+* After each transactional task, update the roadmap bead and any touched subtask beads with current status, verification notes, dependencies, and child/subtask state.
+* File residual task beads under the epic as they surface from subtasks; do not leave known follow-up work only in prose.
+* In the final prompt response, summarize current bead state, what changed, verification performed or skipped, and any new beads filed.
 * Push bead state with `bd dolt push` when the bead database has a configured remote.
 * Do not commit only when per-task user guidance forbids it, or when committing or recording durable state would be dangerous/destructive and the user has not authorized the override.
 

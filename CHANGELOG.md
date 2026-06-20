@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 * Clarified that batch mode can return a digest for parseable diagnostics from a nonzero tool exit while still failing on unparsable nonzero output.
 * Clarified docs discipline around ADRs, beads, and manifest hash refresh after documentation changes.
 * Strengthened bead-scoped wrap-up guidance to require transactional commits, clean working trees, and explicit close/amend/split bead state.
+* Clarified incomplete bead workflow: epic-shaped remaining work, roadmap beads, transactional status updates, residual task beads, and prompt-final summaries.
 
 ### Notes
 

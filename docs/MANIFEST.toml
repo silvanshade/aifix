@@ -16,7 +16,7 @@ b3 = "631afd13f957b90369c13f7d502a98870c9b84c29e3fb99dc7082638a6a769c4"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "fb6dc2a5b4f4ab87679efab0c268b071fa67dfbc1c327a4d8acf4afc475b39f4"
+b3 = "760411fd174243a7ca67ab58d2261593fced5b14e72d6f73ddaa6a0198915952"
 
 [[files]]
 path = "docs/ADR.md"
@@ -28,7 +28,7 @@ b3 = "699f52db31ab3d99cfe00d91f7f9514aa455cea99980379f63fb1d8e70ba501d"
 
 [[files]]
 path = "AGENTS.md"
-b3 = "12d526f507fe227384fea42e936f31ca49a75df1edf352e43cc1bc027746784c"
+b3 = "c7f92ee49319d90bcf5421930ac405038a63e9467ceef97225c6e94c0bcde0c5"
 
 [[files]]
 path = ".omp/skills/find-best-rust-crates/SKILL.md"
