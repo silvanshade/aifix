@@ -43,6 +43,7 @@ The MCP server is the primary agent surface.
 It advertises tools for pipeline digests, batch digests, project-local diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance.
 Tool failures are returned as MCP tool results so one bad diagnostic payload does not terminate the stdio session.
 Cached fix replay uses direct `git apply` argv with patch text on stdin; no shell mediates patch checks or application.
+
 ## Adapters
 
 Adapters parse supported protocols into normalized diagnostics:

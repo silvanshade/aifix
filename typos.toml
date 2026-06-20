@@ -1,0 +1,5 @@
+#:schema https://raw.githubusercontent.com/crate-ci/typos/master/config.schema.json
+
+[default.extend-words]
+# Intentional misspelling used in fix-cache replay fixtures.
+lenght = "lenght"

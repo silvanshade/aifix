@@ -688,14 +688,16 @@ mod tests
         Ok(())
     }
 
-    /// Verifies MCP fix reporting can be replayed in suggest mode.
+    /// Verifies MCP fix reporting can be replayed in suggest mode with audit
+    /// JSON.
     ///
     /// # Contract
     /// Preconditions: the test process can create a temporary project root and
     /// run `aifix mcp`. Postconditions: confirms a reported diagnostic fix is
-    /// returned as suggestion text for the same diagnostic. Failure modes:
-    /// filesystem, subprocess, JSON, tool, or text invariant errors fail the
-    /// test. Panics: none.
+    /// returned as suggestion text for the same diagnostic and that the MCP
+    /// JSON surface reports exact per-diagnostic audit metadata without
+    /// running git. Failure modes: filesystem, subprocess, JSON, tool, or
+    /// text invariant errors fail the test. Panics: none.
     #[test]
     fn mcp_reported_fix_replays_as_suggestion() -> Result<(), Box<dyn Error>>
     {
@@ -752,12 +754,114 @@ diff --git a/src/fix.ts b/src/fix.ts
             || format!("report fix should succeed: {report_result}"),
         )?;
         let suggestion = mcp_tool_text(mcp_response_by_id(&responses, 3)?)?;
+        let replay: Value = serde_json::from_str(&suggestion)?;
         require(suggestion.contains("diff --git"), || {
             format!("replay suggestion should include patch header: {suggestion}")
         })?;
         require(suggestion.contains("value.length"), || {
             format!("replay suggestion should include patch body: {suggestion}")
         })?;
+        require(
+            replay
+                .pointer("/result/matches/0/fix/patch")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("value.length")),
+            || format!("replay JSON matches should preserve patch text: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/confidence")
+                .and_then(Value::as_str)
+                == Some("exact"),
+            || format!("replay audit should report exact confidence: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/matched_signature")
+                .and_then(Value::as_str)
+                .is_some(),
+            || format!("replay audit should include matched signature: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/git_check_ran")
+                .and_then(Value::as_bool)
+                == Some(false),
+            || format!("suggest replay audit should not run git check: {replay}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies MCP replay emits a no-match audit entry for unmatched
+    /// diagnostics.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can create a temporary project root and
+    /// run `aifix mcp`. Postconditions: confirms replay JSON includes one audit
+    /// entry with no-match confidence and no matched signature when the cache
+    /// has no applicable fix. Failure modes: filesystem, subprocess, JSON,
+    /// tool, or text invariant errors fail the test. Panics: none.
+    #[test]
+    fn mcp_replay_fixes_reports_no_match_audit() -> Result<(), Box<dyn Error>>
+    {
+        let project_root_dir = create_temp_dir("mcp-fix-no-match")?;
+        let project_root = path_to_str(&project_root_dir)?;
+        let diagnostic = json!({
+            "source": "tsc",
+            "code": "TS2304",
+            "severity": "error",
+            "message": "Cannot find name 'missingValue'.",
+            "spans": [
+                {
+                    "file": "src/no-match.ts",
+                    "line": 2_u64,
+                    "column": 13_u64
+                }
+            ]
+        });
+        let responses = run_mcp(&[
+            mcp_initialize(1),
+            mcp_initialized_notification(),
+            mcp_tool_call(
+                2,
+                "aifix_replay_fixes",
+                &json!({
+                    "projectRoot": project_root,
+                    "diagnostics": [diagnostic],
+                    "mode": "suggest"
+                }),
+            ),
+        ])?;
+
+        let replay_text = mcp_tool_text(mcp_response_by_id(&responses, 2)?)?;
+        let replay: Value = serde_json::from_str(&replay_text)?;
+        require(
+            replay
+                .pointer("/result/matches")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("no-match replay should not return cached matches: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/confidence")
+                .and_then(Value::as_str)
+                == Some("no-match"),
+            || format!("replay audit should report no-match confidence: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/matched_signature")
+                .is_none(),
+            || format!("no-match replay audit should omit matched signature: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/git_check_ran")
+                .and_then(Value::as_bool)
+                == Some(false),
+            || format!("no-match suggest replay should not run git check: {replay}"),
+        )?;
         Ok(())
     }
 

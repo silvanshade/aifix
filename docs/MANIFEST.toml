@@ -8,7 +8,7 @@ b3 = "a6f9f1f09e6b672a4f792fb69d741cca755ffaf7344e8d9b63f2abf7eefac286"
 
 [[files]]
 path = "ARCHITECTURE.md"
-b3 = "4b72bc290ebc013d4df29a88831428e12b21c7ff77b1ff08ddbcba5e8b5d3706"
+b3 = "2cba43d69a0a239149ab6a631d800ce97eab6f53c4e399b05a9bbdb30a1050a2"
 
 [[files]]
 path = "CONTRIBUTING.md"
@@ -16,15 +16,15 @@ b3 = "631afd13f957b90369c13f7d502a98870c9b84c29e3fb99dc7082638a6a769c4"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "eea25ebe8743c8e340ba63120fd02f7002aa0a5ae32d786eaee0a1e27264d713"
+b3 = "cf7c865428d49103014280b9ec5fd46dbf03d3d704b243e8eb4a7fc318bdee84"
 
 [[files]]
 path = "docs/ADR.md"
-b3 = "19d334b7b327ae7096b122f6be4bc9ec11c3cd5860ff823ef21ceef4b02a64e4"
+b3 = "8b70f3892891042843ec9464dfd80973502cc533babcf0f008a48b01dddda4b4"
 
 [[files]]
 path = "docs/KNOWLEDGE.md"
-b3 = "3ed4085aea6b5748810a79e9afda875763b78d34718c712f19133f3d6f58f690"
+b3 = "708a6190693d42e5545bc936fff4f35ddea340ebce627588369b29821ec1b451"
 
 [[files]]
 path = "AGENTS.md"

@@ -38,16 +38,11 @@ ADRs hold accepted decisions; beads hold execution state, blockers, and follow-u
 
 ## Diagnostic cache scope status
 
-Exact-signature diagnostic replay is implemented through the MCP surface and
-the project-local `.aifix/diagnostics.json` cache.
-This covers stable diagnostic signatures, cached patch reporting, replay
-suggestions, dry-run checks, direct `git apply` application, dedupe state, and
-deterministic diagnostic-shape guidance.
+Exact-signature diagnostic replay is implemented through the MCP surface and the project-local `.aifix/diagnostics.json` cache.
+This covers stable diagnostic signatures, cached patch reporting, replay suggestions, dry-run checks, direct `git apply` application, dedupe state, and deterministic diagnostic-shape guidance.
 
-Model-driven generalization is not implemented.
-ADR-0008 accepts a conservative syntax-aware matching design with
-confidence-scored exact, same-node, nearby, and no-match outcomes, but that
-implementation remains pending in filed beads.
+Syntax-aware replay is being implemented under cache schema v2 with exact, same-node, nearby, and no-match outcomes.
+Opt-in model diagnostic generalization is design-accepted in ADR-0009 for cases where exact and syntax-aware analytical matching do not produce a trusted match, but model generalization is not implemented.
 
 ## Project vs. contributor concerns
 

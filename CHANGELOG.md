@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 * Rust workspace crate `crates/aifix` with CLI commands `pipeline`, `batch`, `explain`, `config paths`, and `completions <shell>`.
 * MCP stdio server exposing diagnostic pipeline, batch, dedupe, fix-cache replay, fix reporting, and learned guidance tools.
 * ADR-0008 documents the conservative syntax-aware fix-cache matching design.
+* Syntax-aware diagnostic fix-cache schema v2, Rust syntax matching, replay audit metadata, and safety coverage for conservative exact/same-node/nearby/no-match replay.
 
 ### Changed
 
@@ -24,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 * Clarified docs discipline around ADRs, beads, and manifest hash refresh after documentation changes.
 * Strengthened bead-scoped wrap-up guidance to require transactional commits, clean working trees, and explicit close/amend/split bead state.
 * Clarified incomplete bead workflow: epic-shaped remaining work, roadmap beads, transactional status updates, residual task beads, and prompt-final summaries.
+* Accepted ADR-0009 for opt-in model diagnostic generalization after exact and syntax-aware cache matching fail.
 
 ### Notes
 

@@ -126,3 +126,13 @@ pub mod render;
 ///   errors.
 /// - Panics: none.
 pub mod signature;
+/// Syntax-context extraction for conservative diagnostic cache matching.
+///
+/// # Contract
+/// - Preconditions: callers provide a project root and normalized diagnostic.
+/// - Postconditions: Rust source spans may produce bounded deterministic syntax
+///   evidence; unsupported or unavailable context returns stable no-match
+///   reasons.
+/// - Failure modes: supported source read failures return typed errors.
+/// - Panics: none.
+pub mod syntax;

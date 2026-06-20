@@ -251,7 +251,7 @@ fn tools_list_result() -> Value
             ),
             tool_schema(
                 "aifix_replay_fixes",
-                "Find cached fixes for diagnostics and suggest, check, or apply patches.",
+                "Find cached fixes for diagnostics and return deterministic per-diagnostic audit fields; suggest returns exact and approximate candidates, dry-run checks candidates, and apply only applies exact matches.",
                 &replay_fixes_schema(),
             ),
             tool_schema(
@@ -386,7 +386,11 @@ fn replay_fixes_schema() -> Value
             "digest": { "type": "object" },
             "input": { "type": "string" },
             "protocol": protocol_schema(),
-            "mode": { "type": "string", "enum": ["suggest", "dry-run", "apply"] },
+            "mode": {
+                "type": "string",
+                "enum": ["suggest", "dry-run", "apply"],
+                "description": "suggest returns exact and approximate candidates without git; dry-run runs git apply --check for candidates; apply checks and applies exact matches only, reporting approximate skips in result.diagnostics and skipped_approximate_applies."
+            },
         },
         "additionalProperties": false,
     })
@@ -693,8 +697,8 @@ fn run_report_fix_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// # Contract
 /// - Preconditions: arguments identify diagnostics directly, through a digest,
 ///   or through parseable input.
-/// - Postconditions: finds cached fixes and optionally checks or applies them
-///   through direct process argv/stdin in the cache layer.
+/// - Postconditions: finds cached fixes, emits per-diagnostic audit JSON, and
+///   optionally checks or applies trusted exact patches in the cache layer.
 /// - Failure modes: returns argument, parser, cache, or process errors.
 /// - Panics: none.
 fn run_replay_fixes_tool(arguments: Value) -> Result<ToolOutput, AifixError>

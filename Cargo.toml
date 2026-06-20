@@ -10,11 +10,11 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.96.0"
 description = "Agent-first CLI adapter for normalizing and digesting tool diagnostics."
+readme = "README.md"
 homepage = "https://github.com/silvanshade/aifix"
 repository = "https://github.com/silvanshade/aifix"
 license = "Apache-2.0 OR Apache-2.0 WITH LLVM-exception"
-readme = "README.md"
-keywords = ["agent", "diagnostics", "cli"]
+keywords = ["agent", "cli", "diagnostics"]
 categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
@@ -32,6 +32,8 @@ toml = { version = "0.9", default-features = false, features = [
   "serde",
   "std"
 ] }
+tree-sitter = { version = "0.26.9", default-features = false }
+tree-sitter-rust = "0.24.2"
 
 [workspace.dependencies.clap]
 version = "4.6.1"

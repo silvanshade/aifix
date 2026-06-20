@@ -215,3 +215,49 @@ Fixtures for the eventual implementation must cover exact migration, same-node a
 * Approximate cache hits can help agents find likely fixes without granting them unattended patch authority.
 * Parser failures and unsupported languages fail safe by falling back to exact-only matching.
 * Cache schema evolution has a target shape, while concrete parser dependency choices remain deferred.
+
+## ADR-0009: Accept opt-in model diagnostic generalization
+
+Status: Accepted  
+Date: 2026-06-20
+
+### ADR-0009 context
+
+ADR-0008 accepts exact-signature replay as the only trusted unattended path and syntax-aware matching as a bounded suggestion layer.
+Some diagnostics may still fail exact and syntax-aware analytical matching after source movement, diagnostic wording changes, or related code edits.
+The `aifix-iaz` design bead covers whether a model may help generalize from cache metadata in those remaining cases without weakening deterministic replay rules.
+
+### ADR-0009 decision
+
+Accept opt-in model diagnostic generalization as a design, not as implemented behavior.
+Model use is opt-in only and is disabled unless a caller explicitly enables it for a request or configured workflow.
+The model generalization layer may run only after exact replay and syntax-aware analytical matching do not produce a trusted match.
+
+Model inputs must be bounded and structured.
+They may include the normalized diagnostic family, source, code, severity, message family, cache match metadata, and a bounded syntax window around the diagnostic and candidate fix context.
+They must not include arbitrary repository contents, unbounded source files, or unrelated cache entries.
+
+Model outputs must use a structured contract that can represent at least `no-match`, candidate identity, confidence or rationale metadata, required user action, and failure reason.
+Unparsable output, missing required fields, parser failure, source loading failure, model invocation failure, budget exhaustion, policy refusal, or source/model disagreement is an explicit `no-match` or fallback result.
+These cases must not be converted into silent guesses.
+
+No model-produced or model-generalized candidate may be applied unattended.
+The result is advisory unless a caller explicitly requests application, and any application path still requires the same patch validation used by non-exact replay before modifying files.
+
+Audit output is required.
+The audit record must state that model generalization was opt-in, why exact and syntax-aware matching did not produce a trusted match, the diagnostic family and bounded source-window metadata used, the structured output status, any failure or fallback reason, dry-run status, user action required, and patch validation result when validation is attempted.
+
+Cache schema metadata must distinguish model-generalized records from exact and syntax-aware records.
+It must record model provider or local model identity, model version when available, prompt or contract version, input window bounds, diagnostic family, cache candidate identity, confidence metadata, creation time, and evaluation status.
+This metadata must preserve v1 exact replay compatibility and schema v2 syntax-aware match-index and fix-family compatibility.
+
+Implementation requires an evaluation and test plan before enabling the feature.
+Fixtures must cover opt-in gating, exact-first behavior, syntax-aware-first behavior, bounded input construction, structured output parsing, explicit no-match and fallback cases, parser/source/model failures, no unattended auto-apply, audit records, cache metadata, deterministic disabled behavior, and regression cases where a plausible model suggestion must be rejected.
+
+### ADR-0009 consequences
+
+* Exact replay remains the only trusted unattended auto-apply path.
+* Syntax-aware matching remains the analytical layer before any model use.
+* Model generalization is design-accepted under `aifix-iaz`, but implementation remains pending.
+* Parser, source, and model failures fail safe as explicit no-match or fallback outcomes.
+* Future implementation work must include cache metadata, audit output, and evaluation fixtures before the feature can be enabled.
