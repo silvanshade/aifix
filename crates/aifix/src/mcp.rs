@@ -26,13 +26,13 @@ use crate::batch::run_configured_profile;
 use crate::batch::run_profile_with_limit;
 use crate::cache::ReplayMode;
 use crate::cache::diagnostic_cache_path;
-use crate::cache::filter_unseen_diagnostics;
+use crate::cache::filter_unseen_and_save;
 use crate::cache::load_diagnostic_cache;
-use crate::cache::record_diagnostic_metrics;
-use crate::cache::record_fix;
+use crate::cache::record_fix_and_save;
+use crate::cache::record_guidance_and_save;
 use crate::cache::render_guidance_markdown;
-use crate::cache::replay_cached_fixes;
-use crate::cache::save_diagnostic_cache;
+use crate::cache::replay_cached_fixes_and_save;
+use crate::cache::update_diagnostics_and_save;
 use crate::config::Config;
 use crate::digest::build_digest;
 use crate::error::AifixError;
@@ -676,15 +676,13 @@ fn run_report_fix_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: ReportFixArgs = serde_json::from_value(arguments)?;
     let project_root = resolve_project_root(args.project_root.as_deref())?;
-    let mut cache = load_diagnostic_cache(&project_root)?;
-    let signature = record_fix(
-        &mut cache,
+    let signature = record_fix_and_save(
+        Some(&project_root),
         args.diagnostic.as_ref(),
         args.signature.as_deref(),
         args.patch,
         args.note,
     )?;
-    save_diagnostic_cache(&project_root, &cache)?;
 
     Ok(ToolOutput::Json(json!({
         "signature": signature,
@@ -711,11 +709,9 @@ fn run_replay_fixes_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         args.input.as_deref(),
         args.protocol.as_deref(),
     )?;
-    let mut cache = load_diagnostic_cache(&project_root)?;
     let mode = parse_replay_mode(args.mode.as_deref())?;
-    let result = replay_cached_fixes(Some(&project_root), &mut cache, &diagnostics, mode)?;
+    let result = replay_cached_fixes_and_save(Some(&project_root), &diagnostics, mode)?;
     let value = json!({ "result": result });
-    save_diagnostic_cache(&project_root, &cache)?;
 
     Ok(ToolOutput::Json(value))
 }
@@ -742,9 +738,7 @@ fn run_dedupe_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         args.input.as_deref(),
         args.protocol.as_deref(),
     )?;
-    let mut cache = load_diagnostic_cache(&project_root)?;
-    let unseen = filter_unseen_diagnostics(&mut cache, &diagnostics);
-    save_diagnostic_cache(&project_root, &cache)?;
+    let unseen = filter_unseen_and_save(Some(&project_root), &diagnostics)?;
     let digest = build_digest(
         unseen,
         Invocation::pipeline(protocol, "mcp-dedupe"),
@@ -765,8 +759,7 @@ fn run_guidance_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: GuidanceArgs = serde_json::from_value(arguments)?;
     let project_root = resolve_project_root(args.project_root.as_deref())?;
-    let mut cache = load_diagnostic_cache(&project_root)?;
-    if has_diagnostic_input(
+    let guidance = if has_diagnostic_input(
         args.diagnostics.as_ref(),
         args.digest.as_ref(),
         args.input.as_deref(),
@@ -777,10 +770,12 @@ fn run_guidance_tool(arguments: Value) -> Result<ToolOutput, AifixError>
             args.input.as_deref(),
             args.protocol.as_deref(),
         )?;
-        record_diagnostic_metrics(&mut cache, &diagnostics);
-        save_diagnostic_cache(&project_root, &cache)?;
+        record_guidance_and_save(Some(&project_root), &diagnostics)?
     }
-    let guidance = render_guidance_markdown(&cache);
+    else {
+        let cache = load_diagnostic_cache(&project_root)?;
+        render_guidance_markdown(&cache)
+    };
 
     Ok(ToolOutput::Text(guidance))
 }
@@ -804,19 +799,7 @@ fn apply_optional_cache_updates(
     if !dedupe && !record_metrics {
         return Ok(diagnostics);
     }
-    let mut cache = load_diagnostic_cache(project_root)?;
-    if record_metrics {
-        record_diagnostic_metrics(&mut cache, &diagnostics);
-    }
-    let returned = if dedupe {
-        filter_unseen_diagnostics(&mut cache, &diagnostics)
-    }
-    else {
-        diagnostics
-    };
-    save_diagnostic_cache(project_root, &cache)?;
-
-    Ok(returned)
+    update_diagnostics_and_save(Some(project_root), &diagnostics, dedupe, record_metrics)
 }
 
 /// Resolve an optional project-root string into a UTF-8 absolute or relative

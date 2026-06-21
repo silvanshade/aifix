@@ -11,8 +11,10 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::fs;
+use std::io;
 
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 use tree_sitter::Node;
@@ -150,10 +152,11 @@ pub struct LeadingWhitespaceSignal
 /// Preconditions: `project_root` is a UTF-8 project directory and `diagnostic`
 /// is normalized. Postconditions: only `.rs` paths are parsed; unsupported or
 /// unavailable source returns a stable no-match reason instead of an error.
-/// Failure modes: filesystem read errors return typed IO errors. Panics: none.
+/// Failure modes: unsupported or unavailable source returns stable no-match
+/// reasons; parser setup remains typed. Panics: none.
 ///
 /// # Errors
-/// Returns [`AifixError::Io`] when a supported source file cannot be read.
+/// Returns [`AifixError::Config`] when tree-sitter Rust parser setup fails.
 #[inline]
 pub fn syntax_context_for_diagnostic(
     project_root: &Utf8Path,
@@ -168,14 +171,24 @@ pub fn syntax_context_for_diagnostic(
     if path.extension() != Some("rs") {
         return Ok(no_match("unsupported-source-path"));
     }
-    let source_path = if path.is_absolute() {
-        path.to_path_buf()
-    }
-    else {
-        project_root.join(path)
+    let source_path = resolve_source_path(project_root, path);
+    let bytes = match fs::read(&source_path) {
+        | Ok(bytes) => bytes,
+        | Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Ok(no_match("target-file-not-found"));
+        },
+        | Err(source)
+            if matches!(
+                source.kind(),
+                io::ErrorKind::PermissionDenied
+                    | io::ErrorKind::InvalidData
+                    | io::ErrorKind::UnexpectedEof
+            ) =>
+        {
+            return Ok(no_match("target-file-unreadable"));
+        },
+        | Err(_) => return Ok(no_match("target-file-unreadable")),
     };
-    let bytes = fs::read(&source_path)
-        .map_err(|source| AifixError::io_path(source_path.clone(), source))?;
     if bytes.len() > MAX_SOURCE_BYTES {
         return Ok(no_match("source-too-large"));
     }
@@ -190,6 +203,20 @@ pub fn syntax_context_for_diagnostic(
         span.end_line,
         span.end_column,
     )
+}
+
+/// Resolve an absolute, `./`-relative, workspace-relative, or
+/// crate-root-relative span path.
+fn resolve_source_path(
+    project_root: &Utf8Path,
+    path: &Utf8Path,
+) -> Utf8PathBuf
+{
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let normalized = path.strip_prefix(".").unwrap_or(path);
+    project_root.join(normalized)
 }
 
 /// Build context from source text and one-based diagnostic coordinates.

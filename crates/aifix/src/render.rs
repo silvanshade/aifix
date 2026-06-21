@@ -154,7 +154,8 @@ fn render_markdown(digest: &Digest) -> String
         markdown.push_str(&group.explain.explain_ref);
         markdown.push_str("`)\n");
 
-        if !group.diagnostics.is_empty() {
+        let retained_samples = group.diagnostics.len();
+        if retained_samples > 0 {
             markdown.push_str("- Samples:\n");
             for diagnostic in &group.diagnostics {
                 markdown.push_str("  - ");
@@ -165,6 +166,15 @@ fn render_markdown(digest: &Digest) -> String
                 }
                 markdown.push('\n');
             }
+        }
+        if group.count > retained_samples {
+            markdown.push_str("- Hidden samples: ");
+            markdown.push_str(&(group.count - retained_samples).to_string());
+            markdown.push_str(" (retained ");
+            markdown.push_str(&retained_samples.to_string());
+            markdown.push_str(" of ");
+            markdown.push_str(&group.count.to_string());
+            markdown.push_str(" diagnostics; increase maxDiagnostics to show more)\n");
         }
     }
 

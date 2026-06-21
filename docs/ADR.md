@@ -261,3 +261,44 @@ Fixtures must cover opt-in gating, exact-first behavior, syntax-aware-first beha
 * Model generalization is design-accepted under `aifix-iaz`, but implementation remains pending.
 * Parser, source, and model failures fail safe as explicit no-match or fallback outcomes.
 * Future implementation work must include cache metadata, audit output, and evaluation fixtures before the feature can be enabled.
+
+## ADR-0010: Harden MCP fix replay cache behavior
+
+Status: Accepted  
+Date: 2026-06-21
+
+### ADR-0010 context
+
+The wyrd pre-port verification found that MCP fix replay needed stronger behavior before high-volume Rust diagnostics relied on it.
+The confirmed failures were source/code explanation collisions, replay aborting on missing target files, unclear `report_fix.signature` semantics, and a report-to-replay round-trip that could silently miss.
+The same review raised hardening questions around noisy cargo streams, cache write concurrency, clean inputs, truncation visibility, path handling, and exact-line replay limits.
+
+### ADR-0010 decision
+
+Treat diagnostic explanations as a `(source, code)` classification.
+Rustc and Clippy sources resolve to Rust explanations before any JavaScript or TypeScript lint fallback, and code-only JavaScript/TypeScript lint fallback is reserved for unknown or matching ecosystems.
+
+Define `report_fix` identity explicitly.
+When a diagnostic is supplied, the diagnostic-derived signature owns the cached patch; a mismatched explicit signature is rejected.
+Signature-only reporting remains available for already validated exact cache keys.
+
+Keep cache writes local but serialized.
+Cache-mutating MCP paths use a project-local lock file around load, mutation, and atomic write-rename.
+First cache initialization writes `.aifix/.gitignore` with `*` so consuming repositories do not accidentally commit tool-owned cache files.
+
+Make replay failures per diagnostic.
+Missing or unreadable Rust target files become stable audit fallback reasons, and mixed batches continue scoring other diagnostics.
+Exact-signature matches remain trusted; syntax-aware matches remain suggestions or dry-run candidates unless explicit application passes the existing `git apply` validation.
+Line-shifted exact patches are not guessed into place; failed context remains a replay miss or git validation failure.
+
+Cargo JSONL parsing may retain valid compiler diagnostics beside isolated noisy or truncated lines, but malformed structured input with no valid diagnostics remains an error.
+Empty input returns explicit zero-diagnostic results for the MCP surfaces that accept empty diagnostic sets.
+`maxDiagnostics` caps retained/rendered samples only; aggregate counts and cache metrics still cover the full diagnostic set, and Markdown reports hidden samples.
+
+### ADR-0010 consequences
+
+* MCP agents can distinguish Rust/Clippy diagnostics from JavaScript lint-name collisions.
+* Reported fixes either bind to the diagnostic-derived identity or fail before polluting the cache.
+* Parallel cache writers are serialized without routing tool commands through a shell or adding dependencies.
+* Missing generated or deleted files no longer abort replay for unrelated diagnostics.
+* Exact-line patch churn remains an explicit limitation rather than an unsafe fuzzy apply.

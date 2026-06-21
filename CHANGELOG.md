@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Implement aifix diagnostic CLI
 * _(mcp)_ Add diagnostic server
 * _(cache)_ Add syntax-aware replay
+* _(mcp)_ Harden fix replay cache behavior
 
 ### 📚 Documentation
 
@@ -19,6 +20,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Strengthen bead wrap-up protocol
 * Clarify incomplete bead workflow
 * Design syntax cache matching
+* Document MCP replay cache hardening
 
 ### ⚙️ Miscellaneous Tasks
 

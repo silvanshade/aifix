@@ -792,6 +792,99 @@ diff --git a/src/fix.ts b/src/fix.ts
         Ok(())
     }
 
+    /// Verifies clippy-json diagnostics round-trip through report-fix and
+    /// replay.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can create a Rust source file under a
+    /// temporary project root and run `aifix mcp`. Postconditions: confirms a
+    /// clippy-json parsed diagnostic matches the diagnostic-backed cached fix
+    /// for a present target file in suggest mode. Failure modes: filesystem,
+    /// subprocess, JSON, tool, or text invariant errors fail the test. Panics:
+    /// none.
+    #[test]
+    fn mcp_clippy_json_report_fix_replays_for_present_target() -> Result<(), Box<dyn Error>>
+    {
+        let project_root_dir = create_temp_dir("mcp-clippy-fix-cache")?;
+        let src_dir = project_root_dir.join("src");
+        fs::create_dir_all(&src_dir)?;
+        fs::write(
+            src_dir.join("main.rs"),
+            "fn main() {\n    let maybe = Some(1);\n    let _a = 0;\n    let _b = 0;\n    let _c = 0;\n    let _d = 0;\n    let value = maybe.unwrap();\n}\n",
+        )?;
+        let project_root = path_to_str(&project_root_dir)?;
+        let diagnostic = json!({
+            "source": "clippy",
+            "code": "clippy::unwrap_used",
+            "severity": "warning",
+            "message": "used `unwrap()` on an `Option` value",
+            "spans": [
+                {
+                    "file": "src/main.rs",
+                    "line": 7_u64,
+                    "column": 18_u64,
+                    "end_line": 7_u64,
+                    "end_column": 31_u64
+                }
+            ]
+        });
+        let clippy_json = r#"{"reason":"compiler-message","message":{"message":"used `unwrap()` on an `Option` value","level":"warning","code":{"code":"clippy::unwrap_used"},"spans":[{"file_name":"src/main.rs","line_start":7,"column_start":18,"line_end":7,"column_end":31,"is_primary":true}]}}"#;
+        let patch = "\
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -7 +7 @@
+-    let value = maybe.unwrap();
++    let value = maybe.expect(\"present\");
+";
+        let responses = run_mcp(&[
+            mcp_initialize(1),
+            mcp_initialized_notification(),
+            mcp_tool_call(
+                2,
+                "aifix_report_fix",
+                &json!({
+                    "projectRoot": project_root,
+                    "diagnostic": diagnostic,
+                    "patch": patch
+                }),
+            ),
+            mcp_tool_call(
+                3,
+                "aifix_replay_fixes",
+                &json!({
+                    "projectRoot": project_root,
+                    "input": clippy_json,
+                    "protocol": "clippy-json",
+                    "mode": "suggest"
+                }),
+            ),
+        ])?;
+
+        let report_result = mcp_result(mcp_response_by_id(&responses, 2)?)?;
+        require(
+            report_result.get("isError").and_then(Value::as_bool) != Some(true),
+            || format!("report fix should succeed: {report_result}"),
+        )?;
+        let replay_text = mcp_tool_text(mcp_response_by_id(&responses, 3)?)?;
+        let replay: Value = serde_json::from_str(&replay_text)?;
+        require(
+            replay
+                .pointer("/result/diagnostics/0/confidence")
+                .and_then(Value::as_str)
+                == Some("exact"),
+            || format!("clippy replay audit should report exact confidence: {replay}"),
+        )?;
+        require(
+            replay
+                .pointer("/result/matches/0/fix/patch")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("maybe.expect")),
+            || format!("clippy replay should preserve exact-line git patch text: {replay}"),
+        )?;
+        Ok(())
+    }
+
     /// Verifies MCP replay emits a no-match audit entry for unmatched
     /// diagnostics.
     ///
@@ -960,6 +1053,215 @@ diff --git a/src/fix.ts b/src/fix.ts
         require(markdown.contains("not assignable"), || {
             format!("markdown should preserve the diagnostic message: {markdown}")
         })?;
+        Ok(())
+    }
+
+    /// Verifies that empty auto pipeline input is an explicit zero-diagnostic
+    /// digest.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can write an empty input file and run
+    /// the binary. Postconditions: confirms auto protocol does not treat empty
+    /// input as a generic diagnostic and reports zero counts, groups, and
+    /// diagnostics. Failure modes: command, UTF-8, JSON, filesystem, or
+    /// digest-invariant failures fail the test. Panics: none.
+    #[test]
+    fn auto_pipeline_empty_input_emits_zero_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let input = write_temp_input("empty-auto", "")?;
+        let output = run_aifix([
+            OsStr::new("pipeline"),
+            OsStr::new("--protocol"),
+            OsStr::new("auto"),
+            OsStr::new("--format"),
+            OsStr::new("json"),
+            OsStr::new("--input"),
+            input.as_os_str(),
+        ])?;
+        let digest = successful_json(output)?;
+
+        require(
+            digest.pointer("/counts/total").and_then(Value::as_u64) == Some(0),
+            || format!("empty auto pipeline should report zero total diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("empty auto pipeline should include an empty diagnostics array: {digest}"),
+        )?;
+        require(
+            digest
+                .get("groups")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("empty auto pipeline should include an empty groups array: {digest}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that MCP pipeline results preserve empty auto input as an
+    /// explicit zero-diagnostic digest.
+    ///
+    /// # Contract
+    /// Preconditions: Cargo exposes a runnable `aifix` binary. Postconditions:
+    /// confirms the MCP API returns JSON with zero diagnostics instead of an
+    /// error or generic text diagnostic for empty protocol:auto input. Failure
+    /// modes: subprocess, JSON, tool, or digest-invariant failures fail the
+    /// test. Panics: none.
+    #[test]
+    fn mcp_pipeline_empty_input_returns_zero_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let responses = run_mcp(&[
+            mcp_initialize(1),
+            mcp_initialized_notification(),
+            mcp_tool_call(
+                2,
+                "aifix_pipeline",
+                &json!({
+                    "input": "",
+                    "protocol": "auto",
+                    "format": "json"
+                }),
+            ),
+        ])?;
+        let text = mcp_tool_text(mcp_response_by_id(&responses, 2)?)?;
+        let digest: Value = serde_json::from_str(&text)?;
+
+        require(
+            digest.pointer("/counts/total").and_then(Value::as_u64) == Some(0),
+            || format!("empty MCP pipeline should report zero total diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("empty MCP pipeline should include an empty diagnostics array: {digest}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that noisy cargo streams retain valid compiler diagnostics.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can write a temporary cargo JSONL stream
+    /// and run the binary. Postconditions: confirms valid compiler-message
+    /// diagnostics survive adjacent non-diagnostic cargo events, plain text,
+    /// and truncated JSON. Failure modes: command, UTF-8, JSON, filesystem, or
+    /// digest-invariant failures fail the test. Panics: none.
+    #[test]
+    fn noisy_cargo_pipeline_retains_good_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let input = write_temp_input(
+            "noisy-cargo",
+            concat!(
+                "{\"reason\":\"compiler-artifact\",\"package_id\":\"demo 0.1.0\"}\n",
+                "warning: build script emitted non-json noise\n",
+                "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"used `unwrap()` on an `Option` value\",\"level\":\"warning\",\"code\":{\"code\":\"clippy::unwrap_used\"},\"spans\":[{\"file_name\":\"src/main.rs\",\"line_start\":7,\"column_start\":9,\"line_end\":7,\"column_end\":15,\"is_primary\":true}]}}\n",
+                "{\"reason\":\"compiler-message\",\"message\":"
+            ),
+        )?;
+        let output = run_aifix([
+            OsStr::new("pipeline"),
+            OsStr::new("--protocol"),
+            OsStr::new("auto"),
+            OsStr::new("--format"),
+            OsStr::new("json"),
+            OsStr::new("--input"),
+            input.as_os_str(),
+        ])?;
+        let digest = successful_json(output)?;
+
+        require(
+            digest.pointer("/counts/total").and_then(Value::as_u64) == Some(1),
+            || format!("noisy cargo pipeline should retain the one good diagnostic: {digest}"),
+        )?;
+        require(json_contains_str(&digest, "clippy::unwrap_used"), || {
+            format!("noisy cargo pipeline should preserve the clippy code: {digest}")
+        })?;
+        require(json_contains_str(&digest, "src/main.rs"), || {
+            format!("noisy cargo pipeline should preserve the diagnostic path: {digest}")
+        })?;
+        Ok(())
+    }
+
+    /// Verifies that malformed-only cargo-shaped structured input is rejected.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can write a malformed cargo JSONL stream
+    /// and run the binary. Postconditions: confirms auto protocol reports a
+    /// JSON boundary error rather than falling through to generic diagnostics.
+    /// Failure modes: command, UTF-8, filesystem, or error-message invariant
+    /// failures fail the test. Panics: none.
+    #[test]
+    fn malformed_only_cargo_pipeline_is_rejected() -> Result<(), Box<dyn Error>>
+    {
+        let input = write_temp_input(
+            "malformed-cargo",
+            "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"truncated\"",
+        )?;
+        let output = run_aifix([
+            OsStr::new("pipeline"),
+            OsStr::new("--protocol"),
+            OsStr::new("auto"),
+            OsStr::new("--format"),
+            OsStr::new("json"),
+            OsStr::new("--input"),
+            input.as_os_str(),
+        ])?;
+        let stderr = unsuccessful_stderr(output)?;
+
+        require(stderr.contains("json error"), || {
+            format!("malformed-only cargo pipeline should report a JSON error: {stderr}")
+        })?;
+        Ok(())
+    }
+
+    /// Verifies that maxDiagnostics hides only samples, not counts.
+    ///
+    /// # Contract
+    /// Preconditions: the test process can write multiple related diagnostics
+    /// and run the binary. Postconditions: confirms Markdown reports full
+    /// counts while visibly describing hidden group samples when
+    /// maxDiagnostics truncates retained examples. Failure modes: command,
+    /// UTF-8, filesystem, or Markdown-invariant failures fail the test. Panics:
+    /// none.
+    #[test]
+    fn markdown_max_diagnostics_reports_hidden_samples() -> Result<(), Box<dyn Error>>
+    {
+        let input = write_temp_input(
+            "max-diagnostics-markdown",
+            concat!(
+                "src/app.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+                "src/app.ts(2,1): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+                "src/app.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+            ),
+        )?;
+        let output = run_aifix([
+            OsStr::new("pipeline"),
+            OsStr::new("--protocol"),
+            OsStr::new("typescript-text"),
+            OsStr::new("--format"),
+            OsStr::new("markdown"),
+            OsStr::new("--input"),
+            input.as_os_str(),
+            OsStr::new("--max-diagnostics"),
+            OsStr::new("1"),
+        ])?;
+        let markdown = successful_stdout(output)?;
+
+        require(markdown.contains("- Total diagnostics: 3"), || {
+            format!("Markdown should preserve full diagnostic totals: {markdown}")
+        })?;
+        require(markdown.contains("- Count: 3"), || {
+            format!("Markdown should preserve full group counts: {markdown}")
+        })?;
+        require(
+            markdown.contains("- Hidden samples: 2 (retained 1 of 3 diagnostics"),
+            || format!("Markdown should report maxDiagnostics sample truncation: {markdown}"),
+        )?;
         Ok(())
     }
 

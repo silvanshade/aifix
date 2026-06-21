@@ -20,6 +20,7 @@ Use the narrowest command that proves your change.
   + `aifix completions bash`
 
 Do not suppress warnings, skip tests, or narrow a verification claim beyond what you actually ran.
+For the moment, ignore linter failures whose diagnostic target is `./CHANGELOG.md` in this local aifix repo; do not ignore unrelated failures.
 
 ## Rust design policy
 

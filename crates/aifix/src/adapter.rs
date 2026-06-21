@@ -225,50 +225,71 @@ fn parse_aifix_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 /// Parse newline-delimited cargo compiler-message JSON.
 ///
 /// # Contract
-/// - Preconditions: each non-empty line is a complete JSON cargo message
-///   object.
-/// - Postconditions: returns normalized compiler-message diagnostics and
-///   ignores other cargo message reasons.
-/// - Failure modes: returns JSON errors for malformed lines or parser errors
-///   when non-empty input has no JSON messages.
+/// - Preconditions: non-empty lines may contain cargo JSON events, unrelated
+///   cargo output, or truncated/noisy stream fragments.
+/// - Postconditions: returns normalized compiler-message diagnostics, ignores
+///   other cargo message reasons, and retains valid diagnostics even when
+///   adjacent lines are malformed.
+/// - Failure modes: returns the first JSON/parser error when no valid
+///   compiler-message diagnostic can be recovered, or a parser error when
+///   non-empty input contains no JSON messages.
 /// - Panics: none.
 fn parse_clippy_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     let mut diagnostics = Vec::new();
     let mut saw_json = false;
     let mut saw_compiler_message = false;
+    let mut first_structured_error = None;
 
     for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let value = serde_json::from_str::<Value>(line)?;
+        let value = match serde_json::from_str::<Value>(line) {
+            | Ok(value) => value,
+            | Err(error) => {
+                if first_structured_error.is_none() {
+                    first_structured_error = Some(AifixError::Json(error));
+                }
+                continue;
+            },
+        };
         saw_json = true;
         if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
             continue;
         }
         saw_compiler_message = true;
-        let message = value
-            .get("message")
-            .ok_or_else(|| AifixError::parser("cargo compiler-message missing message object"))?;
-        let diagnostic =
-            compiler_message_to_diagnostic(message, value.clone()).ok_or_else(|| {
-                AifixError::parser("cargo compiler-message contained no non-empty message text")
-            })?;
+        let Some(message) = value.get("message")
+        else {
+            if first_structured_error.is_none() {
+                first_structured_error = Some(AifixError::parser(
+                    "cargo compiler-message missing message object",
+                ));
+            }
+            continue;
+        };
+        let Some(diagnostic) = compiler_message_to_diagnostic(message, value.clone())
+        else {
+            if first_structured_error.is_none() {
+                first_structured_error = Some(AifixError::parser(
+                    "cargo compiler-message contained no non-empty message text",
+                ));
+            }
+            continue;
+        };
         diagnostics.push(diagnostic);
     }
 
-    if diagnostics.is_empty() && saw_json && !saw_compiler_message {
+    if !diagnostics.is_empty() {
         return Ok(diagnostics);
     }
-    if diagnostics.is_empty() {
-        return Err(AifixError::parser(
-            "clippy JSON input did not contain compiler messages",
-        ));
+    if let Some(error) = first_structured_error {
+        return Err(error);
+    }
+    if saw_json && !saw_compiler_message {
+        return Ok(diagnostics);
     }
 
-    debug_assert!(
-        !diagnostics.is_empty(),
-        "successful clippy JSON parsing must return diagnostics"
-    );
-    Ok(diagnostics)
+    Err(AifixError::parser(
+        "clippy JSON input did not contain compiler messages",
+    ))
 }
 
 /// Convert one rustc compiler message object into a normalized diagnostic.
@@ -1055,6 +1076,70 @@ mod tests
         require(
             matches!(error, AifixError::Parser(_)),
             "auto mode should return a structured parser error",
+        )
+    }
+
+    /// Cargo auto parsing keeps valid compiler diagnostics beside noisy lines.
+    ///
+    /// # Contract
+    /// - Preconditions: parser helpers are available in the test build.
+    /// - Postconditions: confirms one valid compiler-message survives adjacent
+    ///   cargo events, plain noise, and truncated JSON.
+    /// - Failure modes: returns a parser error if auto mode drops the valid
+    ///   diagnostic or classifies the source incorrectly.
+    /// - Panics: none.
+    #[test]
+    fn auto_cargo_stream_retains_diagnostics_with_noise() -> Result<(), AifixError>
+    {
+        let diagnostics = parse_diagnostics(
+            Protocol::Auto,
+            concat!(
+                "{\"reason\":\"compiler-artifact\",\"package_id\":\"demo 0.1.0\"}\n",
+                "warning: build script printed a non-json line\n",
+                "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"used `unwrap()` on an `Option` value\",\"level\":\"warning\",\"code\":{\"code\":\"clippy::unwrap_used\"},\"spans\":[{\"file_name\":\"src/main.rs\",\"line_start\":7,\"column_start\":9,\"line_end\":7,\"column_end\":15,\"is_primary\":true}]}}\n",
+                "{\"reason\":\"compiler-message\",\"message\":"
+            ),
+        )?;
+
+        require(
+            diagnostics.len() == 1,
+            "noisy cargo stream should keep one diagnostic",
+        )?;
+        let diagnostic = diagnostics
+            .first()
+            .ok_or_else(|| AifixError::parser("noisy cargo stream returned no diagnostics"))?;
+        require(
+            diagnostic.code.as_deref() == Some("clippy::unwrap_used"),
+            "cargo diagnostic should preserve the clippy code",
+        )?;
+        require(
+            diagnostic.source == "clippy",
+            "cargo diagnostic should be classified as clippy",
+        )
+    }
+
+    /// Cargo auto parsing rejects malformed structured streams with no payload.
+    ///
+    /// # Contract
+    /// - Preconditions: parser helpers are available in the test build.
+    /// - Postconditions: confirms cargo-looking malformed JSON does not fall
+    ///   through to generic text when no valid compiler-message exists.
+    /// - Failure modes: returns a parser error if auto mode accepts the input
+    ///   or reports the wrong error category.
+    /// - Panics: none.
+    #[test]
+    fn auto_cargo_malformed_only_is_rejected() -> Result<(), AifixError>
+    {
+        let error = parse_diagnostics(
+            Protocol::Auto,
+            "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"truncated\"",
+        )
+        .err()
+        .ok_or_else(|| AifixError::parser("auto mode accepted malformed cargo JSON"))?;
+
+        require(
+            matches!(error, AifixError::Json(_)),
+            "malformed-only cargo stream should return a JSON error",
         )
     }
 

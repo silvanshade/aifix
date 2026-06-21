@@ -12,9 +12,15 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
+use core::time::Duration;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
 use std::process::Command;
 use std::process::Stdio;
+use std::thread;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -47,6 +53,13 @@ pub const CACHE_SCHEMA_VERSION: u8 = 2;
 /// Preconditions: callers append this to a UTF-8 project root. Postconditions:
 /// resolves to `.aifix/diagnostics.json`. Failure modes: none. Panics: none.
 pub const CACHE_FILE_RELATIVE_PATH: &str = ".aifix/diagnostics.json";
+
+/// Project-relative cache lock file location.
+const CACHE_LOCK_FILE_NAME: &str = ".lock";
+/// Project-relative ignore file for private cache contents.
+const CACHE_GITIGNORE_FILE_NAME: &str = ".gitignore";
+/// Ignore pattern written for first cache initialization.
+const CACHE_GITIGNORE_CONTENT: &str = "*\n";
 
 /// Cache behavior for replaying stored patches.
 ///
@@ -481,7 +494,24 @@ impl DiagnosticCache
         diagnostics: &[Diagnostic],
     ) -> Result<Vec<CachedFixMatch>, AifixError>
     {
+        Ok(self
+            .take_cached_fixes_for_diagnostics_with_project_root_and_reasons(
+                project_root,
+                diagnostics,
+            )?
+            .matches)
+    }
+
+    /// Find cached fixes with syntax-aware fallback, returning per-input
+    /// fallback reasons.
+    fn take_cached_fixes_for_diagnostics_with_project_root_and_reasons(
+        &mut self,
+        project_root: &Utf8Path,
+        diagnostics: &[Diagnostic],
+    ) -> Result<ReplayLookup, AifixError>
+    {
         let mut matches = Vec::new();
+        let mut fallback_reasons = vec![None; diagnostics.len()];
         for (diagnostic_index, diagnostic) in diagnostics.iter().enumerate() {
             let signature = DiagnosticSignature::from_diagnostic(diagnostic).as_key();
             if let Some(fix) = self.fixes.get_mut(signature.as_str()) {
@@ -496,9 +526,14 @@ impl DiagnosticCache
                 continue;
             }
             let syntax = syntax_context_for_diagnostic(project_root, diagnostic)?;
-            let Some(evidence) = syntax.evidence()
-            else {
-                continue;
+            let evidence = match syntax {
+                | SyntaxContextResult::Evidence(evidence) => evidence,
+                | SyntaxContextResult::NoMatch { reason } => {
+                    if let Some(slot) = fallback_reasons.get_mut(diagnostic_index) {
+                        *slot = Some(reason);
+                    }
+                    continue;
+                },
             };
             let family = NormalizedDiagnosticFamily::from_diagnostic(diagnostic);
             let family_key = family_key(&family);
@@ -506,7 +541,7 @@ impl DiagnosticCache
             else {
                 continue;
             };
-            let current = SyntaxContextFingerprint::from_evidence(evidence);
+            let current = SyntaxContextFingerprint::from_evidence(&evidence);
             let candidate = family_record
                 .signatures
                 .iter()
@@ -535,7 +570,10 @@ impl DiagnosticCache
                 });
             }
         }
-        Ok(matches)
+        Ok(ReplayLookup {
+            matches,
+            fallback_reasons,
+        })
     }
 
     /// Render deterministic Markdown guidance from current metrics.
@@ -1284,6 +1322,16 @@ pub struct ReplayDiagnosticAudit
     pub skipped_approximate_apply: bool,
 }
 
+/// Internal replay lookup bundle preserving no-match reasons by diagnostic
+/// index.
+struct ReplayLookup
+{
+    /// Cached fix matches selected for replay.
+    matches: Vec<CachedFixMatch>,
+    /// Per-diagnostic no-match fallback reasons by input index.
+    fallback_reasons: Vec<Option<String>>,
+}
+
 /// Result of a cached fix replay operation.
 ///
 /// # Contract
@@ -1347,16 +1395,7 @@ pub fn resolve_cache_path(project_root: Option<&Utf8Path>) -> Result<Utf8PathBuf
 pub fn load_cache(project_root: Option<&Utf8Path>) -> Result<DiagnosticCache, AifixError>
 {
     let path = resolve_cache_path(project_root)?;
-    match std::fs::read_to_string(path.as_std_path()) {
-        | Ok(contents) => {
-            let cache: DiagnosticCache = serde_json::from_str(contents.as_str())?;
-            let cache = cache.migrate_to_current()?;
-            cache.validate()?;
-            Ok(cache)
-        },
-        | Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DiagnosticCache::default()),
-        | Err(error) => Err(AifixError::io_path(path, error)),
-    }
+    raw_load_cache(&path)
 }
 
 /// Save a diagnostics cache, creating the `.aifix` directory when needed.
@@ -1377,18 +1416,7 @@ pub fn save_cache(
     cache: &DiagnosticCache,
 ) -> Result<(), AifixError>
 {
-    cache.validate()?;
-    let path = resolve_cache_path(project_root)?;
-    let Some(parent) = path.parent()
-    else {
-        return Err(AifixError::config(format!(
-            "diagnostics cache path `{path}` has no parent directory"
-        )));
-    };
-    std::fs::create_dir_all(parent.as_std_path())
-        .map_err(|source| AifixError::io_path(parent.to_path_buf(), source))?;
-    let rendered = serde_json::to_string_pretty(cache)?;
-    std::fs::write(path.as_std_path(), rendered).map_err(|source| AifixError::io_path(path, source))
+    with_cache_lock(project_root, |path| raw_save_cache(path, cache))
 }
 
 /// Resolve the project-local diagnostics cache path from an explicit root.
@@ -1402,6 +1430,152 @@ pub fn save_cache(
 pub fn diagnostic_cache_path(project_root: &Utf8Path) -> Utf8PathBuf
 {
     project_root.join(CACHE_FILE_RELATIVE_PATH)
+}
+
+/// Run a cache file operation while holding the project-local lockfile.
+fn with_cache_lock<T, Operation>(
+    project_root: Option<&Utf8Path>,
+    operation: Operation,
+) -> Result<T, AifixError>
+where
+    Operation: FnOnce(&Utf8Path) -> Result<T, AifixError>,
+{
+    let path = resolve_cache_path(project_root)?;
+    let _lock = CacheLock::acquire(&path)?;
+    operation(&path)
+}
+
+/// Load a cache from a resolved cache path.
+fn raw_load_cache(path: &Utf8Path) -> Result<DiagnosticCache, AifixError>
+{
+    match std::fs::read_to_string(path.as_std_path()) {
+        | Ok(contents) => {
+            let cache: DiagnosticCache = serde_json::from_str(contents.as_str())?;
+            let cache = cache.migrate_to_current()?;
+            cache.validate()?;
+            Ok(cache)
+        },
+        | Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DiagnosticCache::default()),
+        | Err(error) => Err(AifixError::io_path(path.to_path_buf(), error)),
+    }
+}
+
+/// Save a cache to a resolved cache path using an atomic temp-file rename.
+fn raw_save_cache(
+    path: &Utf8Path,
+    cache: &DiagnosticCache,
+) -> Result<(), AifixError>
+{
+    cache.validate()?;
+    let parent = cache_parent(path)?;
+    std::fs::create_dir_all(parent.as_std_path())
+        .map_err(|source| AifixError::io_path(parent.to_path_buf(), source))?;
+    ensure_cache_gitignore(parent)?;
+    let rendered = serde_json::to_string_pretty(cache)?;
+    let temp = cache_temp_path(path);
+    {
+        let mut file = File::create(temp.as_std_path())
+            .map_err(|source| AifixError::io_path(temp.clone(), source))?;
+        io::Write::write_all(&mut file, rendered.as_bytes())
+            .map_err(|source| AifixError::io_path(temp.clone(), source))?;
+        file.sync_all()
+            .map_err(|source| AifixError::io_path(temp.clone(), source))?;
+    };
+    std::fs::rename(temp.as_std_path(), path.as_std_path())
+        .map_err(|source| AifixError::io_path(path.to_path_buf(), source))
+}
+
+/// Return the `.aifix` directory for a resolved cache path.
+fn cache_parent(path: &Utf8Path) -> Result<&Utf8Path, AifixError>
+{
+    path.parent().ok_or_else(|| {
+        AifixError::config(format!(
+            "diagnostics cache path `{path}` has no parent directory"
+        ))
+    })
+}
+
+/// Create `.aifix/.gitignore` with private-cache ignore rules if absent.
+fn ensure_cache_gitignore(parent: &Utf8Path) -> Result<(), AifixError>
+{
+    let path = parent.join(CACHE_GITIGNORE_FILE_NAME);
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path.as_std_path())
+    {
+        | Ok(mut file) => {
+            io::Write::write_all(&mut file, CACHE_GITIGNORE_CONTENT.as_bytes())
+                .map_err(|source| AifixError::io_path(path.clone(), source))?;
+            Ok(())
+        },
+        | Err(source) if source.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        | Err(source) => Err(AifixError::io_path(path, source)),
+    }
+}
+
+/// Build a unique temp path beside the diagnostics cache.
+fn cache_temp_path(path: &Utf8Path) -> Utf8PathBuf
+{
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    path.with_file_name(format!(
+        "diagnostics.json.tmp-{}-{nanos}",
+        std::process::id()
+    ))
+}
+
+/// Best-effort lockfile guard for cache read-modify-write sequences.
+struct CacheLock
+{
+    /// Path to the held lockfile.
+    path: Utf8PathBuf,
+}
+
+impl CacheLock
+{
+    /// Acquire the cache lockfile, waiting briefly for concurrent writers.
+    ///
+    /// # Errors
+    /// Returns IO errors for lock directory or lockfile creation failures and a
+    /// process error if the lock cannot be acquired before the retry budget.
+    fn acquire(cache_path: &Utf8Path) -> Result<Self, AifixError>
+    {
+        let parent = cache_parent(cache_path)?;
+        std::fs::create_dir_all(parent.as_std_path())
+            .map_err(|source| AifixError::io_path(parent.to_path_buf(), source))?;
+        let path = parent.join(CACHE_LOCK_FILE_NAME);
+        for _ in 0_usize .. 500_usize {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path.as_std_path())
+            {
+                | Ok(mut file) => {
+                    let owner = format!("pid={}\n", std::process::id());
+                    io::Write::write_all(&mut file, owner.as_bytes())
+                        .map_err(|source| AifixError::io_path(path.clone(), source))?;
+                    return Ok(Self { path });
+                },
+                | Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
+                    thread::sleep(Duration::from_millis(10));
+                },
+                | Err(source) => return Err(AifixError::io_path(path, source)),
+            }
+        }
+        Err(AifixError::process(format!(
+            "timed out waiting for diagnostics cache lock `{path}`"
+        )))
+    }
+}
+
+impl Drop for CacheLock
+{
+    fn drop(&mut self)
+    {
+        drop(std::fs::remove_file(self.path.as_std_path()));
+    }
 }
 
 /// Load a diagnostics cache from an explicit project root.
@@ -1494,9 +1668,58 @@ pub fn record_fix(
 ) -> Result<String, AifixError>
 {
     match (diagnostic, signature) {
-        | (Some(value), _) => cache.record_fix_for_diagnostic(value, patch, note),
+        | (Some(value), maybe_signature) => {
+            validate_explicit_signature_matches_diagnostic(value, maybe_signature)?;
+            cache.record_fix_for_diagnostic(value, patch, note)
+        },
         | (None, Some(value)) => cache.record_fix_for_signature(value, patch, note),
         | (None, None) => Err(AifixError::invalid_argument(
+            "diagnostic or signature is required to record a fix",
+        )),
+    }
+}
+
+/// Validate that an explicit signature, when supplied, matches the
+/// diagnostic-derived signature.
+fn validate_explicit_signature_matches_diagnostic(
+    diagnostic: &Diagnostic,
+    signature: Option<&str>,
+) -> Result<String, AifixError>
+{
+    let canonical = DiagnosticSignature::from_diagnostic(diagnostic).as_key();
+    if let Some(explicit) = signature {
+        let explicit = DiagnosticSignature::canonical_key(explicit)?;
+        if explicit != canonical {
+            return Err(AifixError::invalid_argument(
+                "explicit signature does not match diagnostic-derived signature",
+            ));
+        }
+    }
+    Ok(canonical)
+}
+
+/// Record a fix while preserving diagnostic-first canonical signature
+/// semantics.
+fn record_fix_with_optional_project_root(
+    cache: &mut DiagnosticCache,
+    project_root: Option<&Utf8Path>,
+    diagnostic: Option<&Diagnostic>,
+    signature: Option<&str>,
+    patch: String,
+    note: Option<String>,
+) -> Result<String, AifixError>
+{
+    match (diagnostic, signature, project_root) {
+        | (Some(value), maybe_signature, Some(root)) => {
+            validate_explicit_signature_matches_diagnostic(value, maybe_signature)?;
+            cache.record_fix_for_diagnostic_with_project_root(root, value, patch, note)
+        },
+        | (Some(value), maybe_signature, None) => {
+            validate_explicit_signature_matches_diagnostic(value, maybe_signature)?;
+            cache.record_fix_for_diagnostic(value, patch, note)
+        },
+        | (None, Some(value), _) => cache.record_fix_for_signature(value, patch, note),
+        | (None, None, _) => Err(AifixError::invalid_argument(
             "diagnostic or signature is required to record a fix",
         )),
     }
@@ -1580,10 +1803,12 @@ pub fn filter_unseen_and_save(
     diagnostics: &[Diagnostic],
 ) -> Result<Vec<Diagnostic>, AifixError>
 {
-    let mut cache = load_cache(project_root)?;
-    let unseen = cache.filter_unseen_diagnostics(diagnostics);
-    save_cache(project_root, &cache)?;
-    Ok(unseen)
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        let unseen = cache.filter_unseen_diagnostics(diagnostics);
+        raw_save_cache(path, &cache)?;
+        Ok(unseen)
+    })
 }
 
 /// Load a cache, record metrics, and save changes.
@@ -1602,9 +1827,39 @@ pub fn record_metrics_and_save(
     diagnostics: &[Diagnostic],
 ) -> Result<(), AifixError>
 {
-    let mut cache = load_cache(project_root)?;
-    cache.record_metrics(diagnostics);
-    save_cache(project_root, &cache)
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        cache.record_metrics(diagnostics);
+        raw_save_cache(path, &cache)
+    })
+}
+
+/// Apply optional metric and dedupe updates in one locked cache transaction.
+///
+/// # Errors
+/// Returns cache load/save errors from the locked transaction.
+#[inline]
+pub fn update_diagnostics_and_save(
+    project_root: Option<&Utf8Path>,
+    diagnostics: &[Diagnostic],
+    dedupe: bool,
+    record_metrics: bool,
+) -> Result<Vec<Diagnostic>, AifixError>
+{
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        if record_metrics {
+            cache.record_metrics(diagnostics);
+        }
+        let returned = if dedupe {
+            cache.filter_unseen_diagnostics(diagnostics)
+        }
+        else {
+            diagnostics.to_owned()
+        };
+        raw_save_cache(path, &cache)?;
+        Ok(returned)
+    })
 }
 
 /// Record a fix by diagnostic or prevalidated signature and save the cache.
@@ -1627,21 +1882,19 @@ pub fn record_fix_and_save(
     note: Option<String>,
 ) -> Result<String, AifixError>
 {
-    let mut cache = load_cache(project_root)?;
-    let recorded = match (diagnostic, signature, project_root) {
-        | (Some(value), _, Some(root)) => {
-            cache.record_fix_for_diagnostic_with_project_root(root, value, patch, note)?
-        },
-        | (Some(value), _, None) => cache.record_fix_for_diagnostic(value, patch, note)?,
-        | (None, Some(value), _) => cache.record_fix_for_signature(value, patch, note)?,
-        | (None, None, _) => {
-            return Err(AifixError::invalid_argument(
-                "diagnostic or signature is required to record a fix",
-            ));
-        },
-    };
-    save_cache(project_root, &cache)?;
-    Ok(recorded)
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        let recorded = record_fix_with_optional_project_root(
+            &mut cache,
+            project_root,
+            diagnostic,
+            signature,
+            patch,
+            note,
+        )?;
+        raw_save_cache(path, &cache)?;
+        Ok(recorded)
+    })
 }
 
 /// Replay cached fixes for diagnostics according to `mode`.
@@ -1651,8 +1904,11 @@ pub fn record_fix_and_save(
 /// compatible for the requested project. Postconditions: `Suggest` returns
 /// exact and approximate candidates without invoking git; `DryRun` verifies
 /// every candidate; `Apply` verifies and applies exact candidates only while
-/// auditing approximate skips. Failure modes: process setup, nonzero git exit
-/// status, or cache lookup IO errors return typed errors. Panics: none.
+/// auditing approximate skips. Limitation: patch application remains
+/// exact-line/git-apply based, so independent line shifts in target files can
+/// make otherwise relevant cached fixes fail validation. Failure modes: process
+/// setup, nonzero git exit status, or cache lookup IO errors return typed
+/// errors. Panics: none.
 ///
 /// # Errors
 /// Returns current-directory, cache lookup, process spawn, process IO, or
@@ -1669,11 +1925,14 @@ pub fn replay_cached_fixes(
         | Some(path) => path.to_path_buf(),
         | None => current_utf8_dir()?,
     };
-    let matches = cache.take_cached_fixes_for_diagnostics_with_project_root(&root, diagnostics)?;
+    let replay_lookup = cache
+        .take_cached_fixes_for_diagnostics_with_project_root_and_reasons(&root, diagnostics)?;
+    let matches = replay_lookup.matches;
     let mut checked = 0_usize;
     let mut applied = 0_usize;
     let mut skipped_approximate_applies = 0_usize;
-    let mut replay_audit = replay_audit_for_matches(diagnostics, &matches);
+    let mut replay_audit =
+        replay_audit_for_matches(diagnostics, &matches, &replay_lookup.fallback_reasons);
 
     match mode {
         | ReplayMode::Suggest => {},
@@ -1729,10 +1988,12 @@ pub fn replay_cached_fixes_and_save(
     mode: ReplayMode,
 ) -> Result<ReplayResult, AifixError>
 {
-    let mut cache = load_cache(project_root)?;
-    let report = replay_cached_fixes(project_root, &mut cache, diagnostics, mode)?;
-    save_cache(project_root, &cache)?;
-    Ok(report)
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        let report = replay_cached_fixes(project_root, &mut cache, diagnostics, mode)?;
+        raw_save_cache(path, &cache)?;
+        Ok(report)
+    })
 }
 
 /// Record metrics and render deterministic Markdown guidance.
@@ -1750,11 +2011,13 @@ pub fn record_guidance_and_save(
     diagnostics: &[Diagnostic],
 ) -> Result<String, AifixError>
 {
-    let mut cache = load_cache(project_root)?;
-    cache.record_metrics(diagnostics);
-    let guidance = cache.render_guidance_markdown();
-    save_cache(project_root, &cache)?;
-    Ok(guidance)
+    with_cache_lock(project_root, |path| {
+        let mut cache = raw_load_cache(path)?;
+        cache.record_metrics(diagnostics);
+        let guidance = cache.render_guidance_markdown();
+        raw_save_cache(path, &cache)?;
+        Ok(guidance)
+    })
 }
 
 /// Render deterministic Markdown guidance from a cache.
@@ -1867,6 +2130,7 @@ fn syntax_match_confidence(
 fn replay_audit_for_matches(
     diagnostics: &[Diagnostic],
     matches: &[CachedFixMatch],
+    fallback_reasons: &[Option<String>],
 ) -> Vec<ReplayDiagnosticAudit>
 {
     let mut audits = Vec::new();
@@ -1905,7 +2169,11 @@ fn replay_audit_for_matches(
                 matched_signature: None,
                 family_key: Some(family_key),
                 syntax_evidence: None,
-                fallback_reason: Some("no-cached-fix-candidate".to_owned()),
+                fallback_reason: fallback_reasons
+                    .get(diagnostic_index)
+                    .cloned()
+                    .flatten()
+                    .or_else(|| Some("no-cached-fix-candidate".to_owned())),
                 git_check_ran: false,
                 apply_ran: false,
                 skipped_approximate_apply: false,
@@ -2116,7 +2384,10 @@ fn git_apply(
 #[cfg(test)]
 mod tests
 {
+    use alloc::sync::Arc;
     use std::fs;
+    use std::sync::Barrier;
+    use std::thread;
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 
@@ -2430,10 +2701,140 @@ mod tests
         assert_eq!(audit.confidence, MatchConfidence::NoMatch);
         assert_eq!(
             audit.fallback_reason.as_deref(),
-            Some("no-cached-fix-candidate")
+            Some("unsupported-source-path")
         );
         assert_eq!(result.checked, 0);
         assert_eq!(result.applied, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_and_mismatched_signature_are_rejected()
+    {
+        let reported = diagnostic("src/lib.rs", 2, 9, 14);
+        let other = diagnostic("src/lib.rs", 3, 9, 14);
+        let other_signature = DiagnosticSignature::from_diagnostic(&other).as_key();
+        let mut cache = DiagnosticCache::default();
+
+        let error = record_fix(
+            &mut cache,
+            Some(&reported),
+            Some(other_signature.as_str()),
+            invalid_patch(),
+            None,
+        )
+        .expect_err("mismatched explicit signature should be rejected");
+
+        assert!(
+            matches!(&error, AifixError::InvalidArgument(_)),
+            "mismatched signature should return InvalidArgument: {error}"
+        );
+        assert!(cache.fixes.is_empty());
+    }
+
+    #[test]
+    fn missing_file_replay_reports_no_match_without_aborting_mixed_batch()
+    -> Result<(), Box<dyn core::error::Error>>
+    {
+        let root = rust_project("missing-mixed");
+        let present = diagnostic("src/lib.rs", 2, 9, 14);
+        let missing = diagnostic("src/missing.rs", 1, 1, 2);
+        let mut cache = DiagnosticCache::default();
+        let present_signature = cache.record_fix_for_diagnostic_with_project_root(
+            &root,
+            &present,
+            invalid_patch(),
+            None,
+        )?;
+
+        let result = replay_cached_fixes(
+            Some(&root),
+            &mut cache,
+            &[missing, present],
+            ReplayMode::Suggest,
+        )?;
+
+        assert_eq!(result.matches.len(), 1);
+        let matched = result
+            .matches
+            .first()
+            .expect("mixed replay should preserve present diagnostic match");
+        assert_eq!(matched.signature, present_signature);
+        assert_eq!(result.diagnostics.len(), 2);
+        let missing_audit = result
+            .diagnostics
+            .first()
+            .expect("mixed replay should include missing-file audit");
+        assert_eq!(missing_audit.confidence, MatchConfidence::NoMatch);
+        assert_eq!(
+            missing_audit.fallback_reason.as_deref(),
+            Some("target-file-not-found")
+        );
+        let present_audit = result
+            .diagnostics
+            .get(1)
+            .expect("mixed replay should include present-file audit");
+        assert_eq!(present_audit.confidence, MatchConfidence::Exact);
+        Ok(())
+    }
+
+    #[test]
+    fn saving_cache_initializes_private_gitignore() -> Result<(), Box<dyn core::error::Error>>
+    {
+        let root = temp_project("gitignore");
+        save_cache(Some(&root), &DiagnosticCache::default())?;
+
+        let ignore = fs::read_to_string(root.join(".aifix/.gitignore"))?;
+        assert_eq!(ignore, CACHE_GITIGNORE_CONTENT);
+        Ok(())
+    }
+
+    #[test]
+    fn seven_concurrent_cache_writers_preserve_all_metric_updates()
+    -> Result<(), Box<dyn core::error::Error>>
+    {
+        let root = Arc::new(temp_project("concurrent-writers"));
+        let barrier = Arc::new(Barrier::new(7));
+        let mut handles = Vec::new();
+        for index in 0 .. 7_u32 {
+            let root = Arc::clone(&root);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || -> Result<(), String> {
+                let diagnostic = Diagnostic::new(
+                    "rustc",
+                    Some(format!("E{index:04}")),
+                    Severity::Error,
+                    "concurrent cache writer",
+                )
+                .with_details(
+                    vec![Span::new(
+                        "src/lib.rs",
+                        Some(1),
+                        Some(index.saturating_add(1)),
+                        Some(1),
+                        Some(index.saturating_add(2)),
+                    )],
+                    Vec::new(),
+                    None,
+                );
+                barrier.wait();
+                record_metrics_and_save(Some(root.as_ref().as_path()), &[diagnostic])
+                    .map_err(|error| error.to_string())
+            }));
+        }
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|panic_payload| {
+                    drop(panic_payload);
+                    std::io::Error::other("writer thread panicked")
+                })?
+                .map_err(std::io::Error::other)?;
+        }
+
+        let cache = load_cache(Some(root.as_ref().as_path()))?;
+        assert_eq!(cache.metrics.total, 7);
+        assert_eq!(cache.metrics.by_code.len(), 7);
         Ok(())
     }
 }

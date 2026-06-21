@@ -55,7 +55,8 @@ Adapters parse supported protocols into normalized diagnostics:
 * Nushell or generic line-oriented text
 
 `auto` mode probes structured inputs first.
-Malformed cargo JSON, complete JSON, LSP, or native-looking diagnostic payloads are rejected at their structured boundary instead of falling through to generic text.
+Malformed complete JSON, LSP, or native-looking diagnostic payloads are rejected at their structured boundary instead of falling through to generic text.
+Cargo JSONL streams skip non-diagnostic events and may retain valid compiler diagnostics beside isolated noisy or truncated lines; malformed cargo-shaped input with no valid diagnostics remains an error.
 TypeScript parsing rejects blank required fields, and LSP parsing rejects blank messages plus malformed or reversed ranges.
 
 A failed tool exit is not automatically a failed `aifix` run.
@@ -65,7 +66,7 @@ Nonzero output that cannot be parsed remains a process error.
 ## Digest
 
 The digest layer deduplicates exact semantic repeats, counts by source and severity, groups by source plus code, and falls back to source plus message when a code is absent.
-Each group carries representative samples capped by the configured maximum.
+Each group carries representative samples capped by the configured maximum and renderers report when additional samples are hidden.
 
 Deduplication excludes preserved raw JSON payload identity.
 Raw payloads remain available in full JSON output, but duplicate identity is based on normalized source, code, severity, message, spans, and suggestions.
@@ -75,12 +76,16 @@ This keeps the output useful for agents without hiding that multiple files or se
 ## Project-local diagnostic cache
 
 MCP cache tools persist deterministic JSON at `.aifix/diagnostics.json` under the selected project root.
+First cache initialization also writes `.aifix/.gitignore` with `*` so consuming repositories do not accidentally commit tool-owned cache files.
+Cache mutations use a project-local lock file around load, mutation, and atomic write-rename so parallel agents do not corrupt the JSON file or lose updates.
 The cache stores schema-versioned diagnostic signatures, already-surfaced diagnostics, cached patch text, and diagnostic-shape metrics.
 Stable signatures are computed from normalized source, code, severity, message, spans, and suggestions.
 They exclude preserved raw JSON payloads.
 
-The dedupe tool records emitted signatures and suppresses repeats on later calls.
+The dedupe tool records emitted signatures and suppresses repeats on later calls; this is a persistent per-project seen set, not a regression detector across clean sessions.
 The fix-cache tools let an agent record a successful patch for a diagnostic signature, then later request suggestions, dry-run checks, or direct application when that signature recurs.
+Replay returns per-diagnostic audit entries for missing or unreadable target source files instead of aborting mixed batches.
+Exact-signature replay remains the only unattended apply path; line-shifted patches still rely on `git apply` context and can be reported as misses rather than guessed.
 The guidance tool aggregates source, severity, code, and signature counts into deterministic Markdown for per-project agent guidance.
 
 ## Renderers
