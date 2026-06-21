@@ -1,23 +1,15 @@
 
-# Beads / Dolt files (added by bd init)
+# beads / dolt files (added by bd init)
 .dolt/
 *.db
 .beads/*.jsonl
 .beads-credential-key
 
-# Rust and build artifacts
+# rust and build artifacts
 target/
 dist/
 build/
 coverage/
 
-# Temporary and local-only files
-temp/
-tmp/
-.local/
-.notes/
-notes.local.*
-*.local.md
-
-# bv (beads viewer) local config and caches
-.bv/
+# user notes
+.notes
