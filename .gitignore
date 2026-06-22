@@ -13,3 +13,6 @@ coverage/
 
 # user notes
 .notes
+
+# bv (beads viewer) local config and caches
+.bv/
