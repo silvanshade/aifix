@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 
 * Implement aifix diagnostic CLI
 * _(mcp)_ Add diagnostic server
+* _(mcp)_ Advertise agent tool guidance during initialize
 * _(cache)_ Add syntax-aware replay
 * _(mcp)_ Harden fix replay cache
 * _(config)_ Default to XDG config paths

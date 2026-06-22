@@ -55,6 +55,16 @@ const SERVER_NAME: &str = "aifix";
 /// Server implementation version reported during initialization.
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Server-level guidance returned to MCP clients during initialization.
+const SERVER_INSTRUCTIONS: &str = concat!(
+    "aifix normalizes diagnostics from parseable tool output; it does not invent fixes or apply changes ",
+    "except explicit cached replay apply mode. Use aifix_pipeline for already-captured diagnostics, ",
+    "aifix_batch to run a configured profile, and treat parseable diagnostics from nonzero exits as findings ",
+    "rather than automatic operational failure. Use aifix_dedupe/aifix_guidance for repeated diagnostic triage. ",
+    "Use aifix_report_fix/aifix_replay_fixes only for explicitly recorded cached patch replay; respect suggest, ",
+    "dry-run, and apply modes. Verify repaired code with the native tools and tests that own it."
+);
+
 /// Run the line-oriented stdio MCP server until stdin reaches EOF.
 ///
 /// # Contract
@@ -67,7 +77,6 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///   successful JSON-RPC tool result envelopes.
 /// - panics: none.
 ///
-/// # Errors
 /// # Errors
 /// Returns an error when process IO fails or when a response cannot be
 /// serialized.
@@ -191,6 +200,7 @@ fn initialize_result() -> Value
 {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
+        "instructions": SERVER_INSTRUCTIONS,
         "serverInfo": {
             "name": SERVER_NAME,
             "version": SERVER_VERSION,

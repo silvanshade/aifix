@@ -546,9 +546,9 @@ mod tests
         Err(std::io::Error::other(message()).into())
     }
 
-    /// Verifies that MCP initialize advertises tool support.
+    /// Verifies that MCP initialize advertises tool support and agent guidance.
     #[test]
-    fn mcp_initialize_advertises_tools_capability() -> Result<(), Box<dyn Error>>
+    fn mcp_initialize_advertises_tools_capability_and_instructions() -> Result<(), Box<dyn Error>>
     {
         let responses = run_mcp(&[mcp_initialize(1)])?;
         let result = mcp_result(mcp_response_by_id(&responses, 1)?)?;
@@ -560,6 +560,31 @@ mod tests
                 .is_some(),
             || format!("initialize result should advertise tools capability: {result}"),
         )?;
+        let instructions = result
+            .get("instructions")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "initialize result should include string instructions: {result}"
+                ))
+            })?;
+        require(!instructions.trim().is_empty(), || {
+            format!("initialize instructions should be non-empty: {result}")
+        })?;
+        for term in [
+            "aifix_pipeline",
+            "aifix_batch",
+            "aifix_replay_fixes",
+            "normalizes diagnostics",
+            "does not invent fixes",
+            "nonzero",
+            "parseable diagnostics",
+            "native tools",
+        ] {
+            require(instructions.contains(term), || {
+                format!("initialize instructions should mention {term:?}: {instructions}")
+            })?;
+        }
         Ok(())
     }
 

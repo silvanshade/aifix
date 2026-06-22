@@ -46,9 +46,22 @@ MCP mode exposes the same diagnostic core over newline-delimited stdio JSON-RPC 
 aifix mcp
 ```
 
-The server advertises tools for pipeline and batch digests, diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance.
+The server advertises tools for pipeline and batch digests, diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance; its initialize response also includes concise agent tool guidance.
 Project-local cache state is stored in `.aifix/diagnostics.json`.
 Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
+
+<details>
+<summary>Agent Tool Guidance</summary>
+
+Use `aifix_pipeline` when another tool already produced diagnostic output.
+Use `aifix_batch` when a configured profile should run diagnostics directly.
+Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
+Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
+`aifix` normalizes diagnostics and does not invent fixes.
+Parseable diagnostics from nonzero tool exits are findings, not an operational failure.
+Agents should still verify repairs with the native tools and tests that own the code.
+
+</details>
 
 ## Protocols and output formats
 
