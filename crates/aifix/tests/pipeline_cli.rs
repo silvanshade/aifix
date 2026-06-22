@@ -50,6 +50,44 @@ mod tests
         Ok(Command::new(binary_path()).args(args).output()?)
     }
 
+    /// Runs the binary with extra environment bindings scoped to the
+    /// subprocess.
+    ///
+    /// # Contract
+    /// - requires: Cargo exposed a runnable `aifix` binary for this test
+    ///   process.
+    /// - ensures: returns captured status, stdout, and stderr without mutating
+    ///   the test process environment.
+    /// - provides: names in `removed_envs` are hidden from the subprocess
+    ///   before names in `envs` are added.
+    /// - fails: returns process-spawn errors to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`std::io::Error`] when the subprocess cannot be
+    /// spawned.
+    fn run_aifix_with_env<I, S, E, K, V>(
+        args: I,
+        envs: E,
+        removed_envs: &[&str],
+    ) -> Result<Output, Box<dyn Error>>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let mut command = Command::new(binary_path());
+        command.args(args);
+        for name in removed_envs {
+            command.env_remove(name);
+        }
+        command.envs(envs);
+        Ok(command.output()?)
+    }
+
     /// Captured MCP subprocess transcript used by stdio integration tests.
     struct McpOutput
     {
@@ -956,6 +994,121 @@ diff --git a/src/main.rs b/src/main.rs
             format!(
                 "digest should expose at least one count for the single fixture diagnostic: {digest}"
             )
+        })?;
+        Ok(())
+    }
+
+    /// Verifies that the default config path policy honors `XDG_CONFIG_HOME`.
+    #[test]
+    fn config_paths_reports_xdg_user_config_by_default() -> Result<(), Box<dyn Error>>
+    {
+        let xdg_home = create_temp_dir("xdg-config-paths")?;
+        let expected = xdg_home.join("aifix").join("aifix.toml");
+        let output = run_aifix_with_env(
+            [OsStr::new("config"), OsStr::new("paths")],
+            [(OsStr::new("XDG_CONFIG_HOME"), xdg_home.as_os_str())],
+            &["AIFIX_CONFIG_DIR_MODE"],
+        )?;
+        let stdout = successful_stdout(output)?;
+        let expected = path_to_str(&expected)?;
+        let expected_line = format!("user: {expected}");
+
+        require(
+            stdout.lines().any(|line| line == expected_line.as_str()),
+            || format!("config paths should report the default XDG user path {expected}: {stdout}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that pipeline defaults load from the XDG user config path.
+    #[test]
+    fn pipeline_loads_defaults_from_xdg_user_config() -> Result<(), Box<dyn Error>>
+    {
+        let xdg_home = create_temp_dir("xdg-config-loading")?;
+        let config_dir = xdg_home.join("aifix");
+        fs::create_dir_all(&config_dir)?;
+        fs::write(
+            config_dir.join("aifix.toml"),
+            "default_protocol = \"clippy-json\"\ndefault_format = \"compact-json\"\n",
+        )?;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/clippy.jsonl");
+        require(fixture.try_exists()?, || {
+            format!(
+                "clippy CLI fixture should exist under the crate tests/fixtures directory: {}",
+                fixture.display()
+            )
+        })?;
+        let output = run_aifix_with_env(
+            [
+                OsStr::new("pipeline"),
+                OsStr::new("--input"),
+                fixture.as_os_str(),
+            ],
+            [(OsStr::new("XDG_CONFIG_HOME"), xdg_home.as_os_str())],
+            &["AIFIX_CONFIG_DIR_MODE"],
+        )?;
+        let digest = successful_json(output)?;
+
+        require(json_contains_str(&digest, "clippy::unwrap_used"), || {
+            format!("XDG user config defaults should parse the clippy fixture: {digest}")
+        })?;
+        require(json_contains_str(&digest, "src/main.rs"), || {
+            format!("XDG user config defaults should preserve diagnostic paths: {digest}")
+        })?;
+        Ok(())
+    }
+
+    /// Verifies that platform-native mode opts out of the default XDG path.
+    #[test]
+    fn platform_native_config_dir_mode_omits_default_xdg_user_path() -> Result<(), Box<dyn Error>>
+    {
+        let xdg_home = create_temp_dir("xdg-config-native-mode")?;
+        let default_xdg_path = xdg_home.join("aifix").join("aifix.toml");
+        let output = run_aifix_with_env(
+            [OsStr::new("config"), OsStr::new("paths")],
+            [
+                (OsStr::new("XDG_CONFIG_HOME"), xdg_home.as_os_str()),
+                (
+                    OsStr::new("AIFIX_CONFIG_DIR_MODE"),
+                    OsStr::new("platform-native"),
+                ),
+            ],
+            &[],
+        )?;
+        let stdout = successful_stdout(output)?;
+        let default_xdg_path = path_to_str(&default_xdg_path)?;
+
+        require(!stdout.contains(default_xdg_path), || {
+            format!(
+                "platform-native mode should not report the default XDG user path {default_xdg_path}: {stdout}"
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Verifies that unsupported config directory modes fail explicitly.
+    #[test]
+    fn unsupported_config_dir_mode_exits_with_config_error() -> Result<(), Box<dyn Error>>
+    {
+        let output = run_aifix_with_env(
+            [OsStr::new("config"), OsStr::new("paths")],
+            [(
+                OsStr::new("AIFIX_CONFIG_DIR_MODE"),
+                OsStr::new("space-cadet"),
+            )],
+            &[],
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let lower_stderr = stderr.to_ascii_lowercase();
+
+        require(lower_stderr.contains("config"), || {
+            format!("unsupported mode error should identify configuration: {stderr}")
+        })?;
+        require(stderr.contains("AIFIX_CONFIG_DIR_MODE"), || {
+            format!("unsupported mode error should name AIFIX_CONFIG_DIR_MODE: {stderr}")
+        })?;
+        require(stderr.contains("space-cadet"), || {
+            format!("unsupported mode error should echo the unsupported value: {stderr}")
         })?;
         Ok(())
     }

@@ -54,18 +54,26 @@ Date: 2026-06-16
 
 Individual users may want defaults, while repositories need project-specific commands and output choices.
 The CLI should work without configuration and avoid requiring a repository-specific directory structure.
+User-level config discovery also needs to be predictable for agents across Linux, macOS, and Windows, while still allowing users to request platform-native directories explicitly.
 
 ### ADR-0003 decision
 
 Discover optional user-level config first, then the nearest project `aifix.toml`.
 Project config overrides user config.
+
+Use XDG-style user config paths by default on every platform: if non-empty `XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/aifix/aifix.toml`; otherwise, if non-empty `HOME` is set, use `$HOME/.config/aifix/aifix.toml`; otherwise, there is no user config path.
+Platform-native config directories are available only as an explicit alternate mode through `AIFIX_CONFIG_DIR_MODE=platform-native` or `AIFIX_CONFIG_DIR_MODE=native`.
+Any other `AIFIX_CONFIG_DIR_MODE` value is rejected as a typed configuration error.
+
 Config may define default protocol, output format, maximum diagnostics, and profile command argv.
 
 ### ADR-0003 consequences
 
 * Local preferences remain possible without leaking into the repository.
 * Project config provides deterministic shared defaults.
-* Existing non-file config candidates are rejected so malformed project state is visible instead of skipped.
+* The default user config location is stable and XDG-style across operating systems.
+* Users who prefer platform-native config directories can opt in without changing the default contract.
+* Existing non-file config candidates and invalid config directory modes are rejected so malformed configuration state is visible instead of skipped.
 
 ## ADR-0004: Explain codes locally and deterministically
 

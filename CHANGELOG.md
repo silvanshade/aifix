@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(mcp)_ Add diagnostic server
 * _(cache)_ Add syntax-aware replay
 * _(mcp)_ Harden fix replay cache
+* _(config)_ Default to XDG config paths
+
+### Refactor
+
+* Align Rust contracts with Wyrd
 
 ### Documentation
 
@@ -20,7 +25,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Strengthen bead wrap-up protocol
 * Clarify incomplete bead workflow
 * Design syntax cache matching
-* Align Rust design-by-contract docs with Wyrd conventions
+* Add project skill docs
 
 ### Continuous Integration
 
@@ -35,6 +40,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Add license metadata
 * _(cargo)_ Add dist profile config
 * _(release)_ Configure release tooling
-* Add Wyrd-style property coverage for diagnostic digest invariants
 
 [unreleased]: https://github.com/silvanshade/aifix/compare/main...HEAD

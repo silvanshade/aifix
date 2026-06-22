@@ -1,7 +1,13 @@
 //! Configuration discovery for `aifix`.
 //!
 //! Discovery loads an optional user configuration followed by the nearest
-//! regular-file project `aifix.toml`.  Existing non-file config candidates are
+//! regular-file project `aifix.toml`. User configuration defaults to an
+//! XDG-style candidate (`$XDG_CONFIG_HOME/aifix/aifix.toml`, then
+//! `$HOME/.config/aifix/aifix.toml`) and has no candidate when neither
+//! environment variable is usable. Set `AIFIX_CONFIG_DIR_MODE` to
+//! `platform-native` or `native` to opt into the platform-native
+//! `directories::ProjectDirs` location instead. Unsupported or non-Unicode mode
+//! values fail as configuration errors. Existing non-file config candidates are
 //! rejected instead of skipped so malformed project state is visible. Project
 //! configuration wins field-by-field so teams can override personal defaults
 //! while inheriting unspecified values.
@@ -10,6 +16,7 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use std::env;
 use std::fs;
 use std::io;
 
@@ -22,6 +29,25 @@ use serde::Serialize;
 use crate::error::AifixError;
 use crate::model::OutputFormat;
 use crate::model::Protocol;
+
+/// Environment variable selecting the user config directory policy.
+const CONFIG_DIR_MODE_ENV: &str = "AIFIX_CONFIG_DIR_MODE";
+/// Config directory mode that selects XDG-style user config discovery.
+const CONFIG_DIR_MODE_XDG: &str = "xdg";
+/// Config directory mode that selects `directories::ProjectDirs`.
+const CONFIG_DIR_MODE_PLATFORM_NATIVE: &str = "platform-native";
+/// Short config directory mode alias for `directories::ProjectDirs`.
+const CONFIG_DIR_MODE_NATIVE: &str = "native";
+/// XDG base directory environment variable for user configuration.
+const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
+/// Home directory environment variable used for the XDG fallback.
+const HOME_ENV: &str = "HOME";
+/// Application directory name used below config roots.
+const APP_NAME: &str = "aifix";
+/// XDG fallback config directory below `HOME`.
+const XDG_CONFIG_DIR_NAME: &str = ".config";
+/// Configuration file name used by user and project config discovery.
+const CONFIG_FILE_NAME: &str = "aifix.toml";
 
 /// Complete runtime configuration after user/project merging.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +103,7 @@ pub struct LoadedConfig
 #[non_exhaustive]
 pub struct ConfigPaths
 {
-    /// User-level config path when the platform exposes one.
+    /// User-level config path when the selected path policy exposes one.
     pub user: Option<Utf8PathBuf>,
     /// Nearest project config found from the start directory upward.
     pub project: Option<Utf8PathBuf>,
@@ -90,22 +116,30 @@ impl Config
 {
     /// Discover and merge user and project configuration for `start`.
     ///
+    /// User configuration uses the XDG-style candidate by default. Set
+    /// `AIFIX_CONFIG_DIR_MODE` to `platform-native` or `native` to use the
+    /// platform-native config directory instead.
+    ///
     /// # Contract
     /// - requires: `start` names a UTF-8 path that may be either a file or a
     ///   directory.
     /// - ensures: returns a config where readable user settings are merged
-    ///   first and nearest project settings override them field-by-field;
-    ///   absent user config is skipped, while discovered non-file config paths
-    ///   are rejected with a configuration error.
-    /// - fails: returns an `AifixError` when the search directory cannot be
+    ///   first from the same candidate returned by [`config_paths`] and nearest
+    ///   project settings override them field-by-field; absent user config is
+    ///   skipped, including when XDG mode has neither usable `XDG_CONFIG_HOME`
+    ///   nor `HOME`, while discovered non-file config paths are rejected with a
+    ///   configuration error.
+    /// - fails: returns an `AifixError` when the config-dir mode environment
+    ///   value is unsupported or non-Unicode, the search directory cannot be
     ///   derived, a discovered config path is not a file, a config file cannot
     ///   be read, or TOML deserialization fails.
     /// - panics: none.
     ///
     /// # Errors
-    /// Returns an error when the config search directory cannot be derived, a
-    /// discovered config path is not a file, a discovered config file cannot be
-    /// read, or TOML decoding fails.
+    /// Returns an error when `AIFIX_CONFIG_DIR_MODE` is unsupported or
+    /// non-Unicode, the config search directory cannot be derived, a discovered
+    /// config path is not a file, a discovered config file cannot be read, or
+    /// TOML decoding fails.
     #[inline]
     pub fn discover(start: &Utf8Path) -> Result<LoadedConfig, AifixError>
     {
@@ -206,25 +240,33 @@ impl ProfileConfig
 
 /// Return candidate config paths for CLI reporting without loading files.
 ///
+/// User configuration uses XDG-style discovery by default: non-empty
+/// valid-UTF-8 `XDG_CONFIG_HOME` yields `$XDG_CONFIG_HOME/aifix/aifix.toml`;
+/// otherwise absent or empty `XDG_CONFIG_HOME` with non-empty valid-UTF-8
+/// `HOME` yields `$HOME/.config/aifix/aifix.toml`; otherwise no user candidate
+/// is returned. Set `AIFIX_CONFIG_DIR_MODE` to `platform-native` or `native` to
+/// use `directories::ProjectDirs` instead.
+///
 /// # Contract
 /// - requires: `start` names a UTF-8 path that may be either a file or a
 ///   directory.
-/// - ensures: returns the platform user config candidate, the nearest
+/// - ensures: returns the selected user config candidate, the nearest
 ///   regular-file project config if one exists, and an empty loaded list.
-/// - fails: returns an `AifixError` when `start` has no usable directory
-///   ancestor, candidate metadata cannot be read, or a discovered `aifix.toml`
-///   exists but is not a regular file.
+/// - fails: returns an `AifixError` when `AIFIX_CONFIG_DIR_MODE` is unsupported
+///   or non-Unicode, `start` has no usable directory ancestor, candidate
+///   metadata cannot be read, or a discovered `aifix.toml` exists but is not a
+///   regular file.
 /// - panics: none.
 ///
 /// # Errors
-/// Returns an error when `start` has no usable directory ancestor for project
-/// configuration discovery, candidate metadata cannot be read, or a discovered
-/// project `aifix.toml` path exists but is not a regular file.
+/// Returns an error when `AIFIX_CONFIG_DIR_MODE` is unsupported or non-Unicode,
+/// when `start` has no usable directory ancestor for project configuration
+/// discovery, candidate metadata cannot be read, or a discovered project
+/// `aifix.toml` path exists but is not a regular file.
 #[inline]
 pub fn config_paths(start: &Utf8Path) -> Result<ConfigPaths, AifixError>
 {
-    let user = ProjectDirs::from("dev", "aifix", "aifix")
-        .and_then(|dirs| Utf8PathBuf::from_path_buf(dirs.config_dir().join("aifix.toml")).ok());
+    let user = user_config_path()?;
     let project = nearest_project_config(start)?;
 
     Ok(ConfigPaths {
@@ -232,6 +274,101 @@ pub fn config_paths(start: &Utf8Path) -> Result<ConfigPaths, AifixError>
         project,
         loaded: Vec::new(),
     })
+}
+
+/// Resolve the selected user-level configuration candidate.
+///
+/// # Contract
+/// - requires: environment values may be absent or present with arbitrary
+///   process-provided bytes.
+/// - ensures: absent, empty, or `xdg` `AIFIX_CONFIG_DIR_MODE` selects the
+///   XDG-style candidate; `platform-native` and `native` select the
+///   `directories::ProjectDirs` candidate.
+/// - fails: returns a configuration error when `AIFIX_CONFIG_DIR_MODE` is
+///   present but not valid UTF-8 or not one of the supported values.
+/// - panics: none.
+fn user_config_path() -> Result<Option<Utf8PathBuf>, AifixError>
+{
+    match env::var(CONFIG_DIR_MODE_ENV) {
+        | Ok(mode) if mode.is_empty() || mode == CONFIG_DIR_MODE_XDG => Ok(xdg_user_config_path()),
+        | Ok(mode) if mode == CONFIG_DIR_MODE_PLATFORM_NATIVE || mode == CONFIG_DIR_MODE_NATIVE => {
+            Ok(platform_native_user_config_path())
+        },
+        | Ok(mode) => Err(unsupported_config_dir_mode_error(&mode)),
+        | Err(env::VarError::NotPresent) => Ok(xdg_user_config_path()),
+        | Err(env::VarError::NotUnicode(_)) => Err(AifixError::config(format!(
+            "{CONFIG_DIR_MODE_ENV} must be valid UTF-8"
+        ))),
+    }
+}
+
+/// Build the default XDG-style user configuration candidate.
+///
+/// # Contract
+/// - requires: environment values may be absent, empty, or non-Unicode.
+/// - ensures: returns `$XDG_CONFIG_HOME/aifix/aifix.toml` when
+///   `XDG_CONFIG_HOME` is present, valid UTF-8, and non-empty; returns
+///   `$HOME/.config/aifix/aifix.toml` when `XDG_CONFIG_HOME` is absent or empty
+///   and `HOME` is present, valid UTF-8, and non-empty; otherwise returns
+///   `None`.
+/// - fails: none.
+/// - panics: none.
+fn xdg_user_config_path() -> Option<Utf8PathBuf>
+{
+    match env::var(XDG_CONFIG_HOME_ENV) {
+        | Ok(base) if !base.is_empty() => {
+            return Some(
+                Utf8PathBuf::from(base)
+                    .join(APP_NAME)
+                    .join(CONFIG_FILE_NAME),
+            );
+        },
+        | Ok(_) | Err(env::VarError::NotPresent) => {},
+        | Err(env::VarError::NotUnicode(_)) => return None,
+    }
+
+    match env::var(HOME_ENV) {
+        | Ok(base) if !base.is_empty() => Some(
+            Utf8PathBuf::from(base)
+                .join(XDG_CONFIG_DIR_NAME)
+                .join(APP_NAME)
+                .join(CONFIG_FILE_NAME),
+        ),
+        | Ok(_) | Err(_) => None,
+    }
+}
+
+/// Build the platform-native user configuration candidate.
+///
+/// # Contract
+/// - requires: platform directory discovery may or may not expose a UTF-8
+///   config directory.
+/// - ensures: returns the existing `directories::ProjectDirs` config candidate
+///   when it can be represented as UTF-8, otherwise `None`.
+/// - fails: none.
+/// - panics: none.
+fn platform_native_user_config_path() -> Option<Utf8PathBuf>
+{
+    let dirs = ProjectDirs::from("dev", APP_NAME, APP_NAME)?;
+
+    Utf8PathBuf::from_path_buf(dirs.config_dir().join(CONFIG_FILE_NAME)).ok()
+}
+
+/// Build the stable error used for unsupported config-directory modes.
+///
+/// # Contract
+/// - requires: `mode` is the unsupported UTF-8 value read from
+///   `AIFIX_CONFIG_DIR_MODE`.
+/// - ensures: returns an [`AifixError::Config`] identifying the variable, the
+///   unsupported value, and the supported values.
+/// - fails: allocation may abort through the global allocator; no recoverable
+///   error is returned.
+/// - panics: none.
+fn unsupported_config_dir_mode_error(mode: &str) -> AifixError
+{
+    AifixError::config(format!(
+        "unsupported {CONFIG_DIR_MODE_ENV} value `{mode}`; expected `{CONFIG_DIR_MODE_XDG}`, `{CONFIG_DIR_MODE_PLATFORM_NATIVE}`, or `{CONFIG_DIR_MODE_NATIVE}`"
+    ))
 }
 
 /// Read and deserialize an optional TOML config file.

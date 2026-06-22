@@ -116,7 +116,10 @@ Stdout and stderr are captured separately with a 1 MiB per-stream limit before U
 
 Configuration discovery reads optional user-level config and then the nearest project `aifix.toml`.
 Project config overrides user config.
-The supported surface is intentionally small: default protocol, default output format, maximum diagnostics, and profile command argv.
+The default user config candidate is XDG-style on every platform: `$XDG_CONFIG_HOME/aifix/aifix.toml` when `XDG_CONFIG_HOME` is non-empty, otherwise `$HOME/.config/aifix/aifix.toml` when `HOME` is non-empty.
+When neither variable is available, user config is absent rather than synthesized from a platform directory.
+Platform-native config directories are still available as an explicit alternate mode by setting `AIFIX_CONFIG_DIR_MODE` to `platform-native` or `native`; every other mode value is rejected as a configuration error.
+The supported config file surface is intentionally small: default protocol, default output format, maximum diagnostics, and profile command argv.
 
 Existing non-file config candidates are rejected instead of skipped.
 This lets teams standardize local behavior without making the CLI depend on any one repository layout or hiding malformed project state.

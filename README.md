@@ -91,5 +91,9 @@ It returns stable references and short summaries instead of performing network l
 
 `aifix` loads optional user configuration first and the nearest project `aifix.toml` second.
 Project configuration overrides user defaults.
+By default, user configuration uses the same XDG-style path policy on every platform: `$XDG_CONFIG_HOME/aifix/aifix.toml` when `XDG_CONFIG_HOME` is non-empty, otherwise `$HOME/.config/aifix/aifix.toml` when `HOME` is non-empty.
+If neither variable is available, there is no user config path.
+Set `AIFIX_CONFIG_DIR_MODE=platform-native` or `AIFIX_CONFIG_DIR_MODE=native` to opt in to platform-native user config directories.
+Any other `AIFIX_CONFIG_DIR_MODE` value is a configuration error.
 Config may set the default protocol, output format, maximum diagnostics, and named profile commands.
 Existing non-file `aifix.toml` candidates are rejected so broken project state is visible.
