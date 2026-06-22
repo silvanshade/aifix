@@ -9,21 +9,9 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 
 /// Clippy compiler-message JSONL used by integration tests and benchmarks.
-///
-/// # Contract
-/// Preconditions: fixture text is embedded at compile time from the crate test
-/// fixtures. Postconditions: exposes non-empty JSONL input without runtime
-/// filesystem access. Failure modes: missing fixture fails compilation.
-/// Panics: none.
 const CLIPPY_FIXTURE: &str = include_str!("../tests/fixtures/clippy.jsonl");
 
 /// Creates stable invocation metadata for the ingest benchmark.
-///
-/// # Contract
-/// Preconditions: the embedded clippy fixture is valid benchmark input.
-/// Postconditions: returns invocation metadata matching a successful `cargo
-/// clippy` run. Failure modes: none.
-/// Panics: debug assertion failure only if the embedded fixture is empty.
 fn benchmark_invocation() -> Invocation
 {
     debug_assert!(
@@ -42,11 +30,12 @@ fn benchmark_invocation() -> Invocation
 /// Parses diagnostics and builds the same digest shape used by the CLI.
 ///
 /// # Contract
-/// Preconditions: `CLIPPY_FIXTURE` remains parseable as clippy JSONL.
-/// Postconditions: sends a built digest to `black_box` when parsing succeeds.
-/// Failure modes: parser failures are debug-asserted and skipped in optimized
-/// benchmarks. Panics: debug assertion failure only when the embedded fixture
-/// stops parsing.
+/// - requires: `CLIPPY_FIXTURE` remains parseable as clippy JSONL.
+/// - ensures: sends a built digest to `black_box` when parsing succeeds.
+/// - fails: parser failures are debug-asserted and skipped in optimized
+///   benchmarks.
+/// - panics: debug assertion failure only when the embedded fixture stops
+///   parsing.
 fn parse_and_digest()
 {
     let parsed = parse_diagnostics(Protocol::ClippyJson, CLIPPY_FIXTURE);
@@ -63,12 +52,6 @@ fn parse_and_digest()
 }
 
 /// Registers ingestion benchmarks.
-///
-/// # Contract
-/// Preconditions: Criterion can register benchmark functions for this target.
-/// Postconditions: registers the clippy fixture parse-and-digest benchmark.
-/// Failure modes: none in this function; benchmark execution failures occur in
-/// the harness. Panics: none.
 fn bench_ingest(c: &mut Criterion)
 {
     c.bench_function("clippy fixture parse and digest", |b| {

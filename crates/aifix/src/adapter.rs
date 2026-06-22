@@ -16,14 +16,6 @@ use crate::model::Span;
 use crate::model::Suggestion;
 
 /// Result of probing one adapter while inferring the diagnostic protocol.
-///
-/// # Contract
-/// - Preconditions: variants are produced only by shape-specific probe helpers.
-/// - Postconditions: distinguishes absent protocol shapes from malformed
-///   matched protocol input.
-/// - Failure modes: [`AutoProbe::Invalid`] carries the parser or JSON boundary
-///   that rejected the matched shape.
-/// - Panics: none.
 enum AutoProbe
 {
     /// The probed input does not have this adapter's shape.
@@ -39,13 +31,12 @@ impl AutoProbe
     /// Convert a parser result into a matched-or-invalid probe result.
     ///
     /// # Contract
-    /// - Preconditions: the caller has already established that the adapter
-    ///   shape is present.
-    /// - Postconditions: preserves successful diagnostics and parser errors
-    ///   without falling through to generic text parsing.
-    /// - Failure modes: returns [`AutoProbe::Invalid`] when `result` is an
-    ///   error.
-    /// - Panics: none.
+    /// - requires: the caller has already established that the adapter shape is
+    ///   present.
+    /// - ensures: preserves successful diagnostics and parser errors without
+    ///   falling through to generic text parsing.
+    /// - fails: returns [`AutoProbe::Invalid`] when `result` is an error.
+    /// - panics: none.
     #[inline]
     fn from_result(result: Result<Vec<Diagnostic>, AifixError>) -> Self
     {
@@ -58,19 +49,18 @@ impl AutoProbe
 
 /// Parse diagnostics from `input` according to `protocol`.
 ///
+/// # Contract
+/// - requires: `input` is UTF-8 output from the selected diagnostic protocol.
+/// - ensures: returns deterministic normalized diagnostics without invoking
+///   tools or network access.
+/// - fails: returns [`AifixError::Json`] for malformed JSON protocols or
+///   [`AifixError::Parser`] when non-empty input contains no diagnostics.
+/// - panics: none.
+///
 /// # Errors
 /// Returns [`AifixError::Json`] when a selected JSON protocol receives
 /// malformed JSON. Returns [`AifixError::Parser`] when non-empty input cannot
 /// be normalized by the selected protocol.
-///
-/// # Contract
-/// - Preconditions: `input` is UTF-8 output from the selected diagnostic
-///   protocol.
-/// - Postconditions: returns deterministic normalized diagnostics without
-///   invoking tools or network access.
-/// - Failure modes: returns [`AifixError::Json`] for malformed JSON protocols
-///   or [`AifixError::Parser`] when non-empty input contains no diagnostics.
-/// - Panics: none.
 #[inline]
 pub fn parse_diagnostics(
     protocol: Protocol,
@@ -90,13 +80,13 @@ pub fn parse_diagnostics(
 /// Try adapters in an order that rejects malformed structured shapes.
 ///
 /// # Contract
-/// - Preconditions: `input` is UTF-8 diagnostic output and may be empty.
-/// - Postconditions: empty or whitespace-only input yields an empty vector;
+/// - requires: `input` is UTF-8 diagnostic output and may be empty.
+/// - ensures: empty or whitespace-only input yields an empty vector;
 ///   structured-looking inputs are handled by their matched adapter, while
 ///   unstructured text falls back to TypeScript then generic diagnostics.
-/// - Failure modes: returns the matched structured parser error instead of
-///   silently converting malformed JSON, LSP, or cargo shapes to generic text.
-/// - Panics: none.
+/// - fails: returns the matched structured parser error instead of silently
+///   converting malformed JSON, LSP, or cargo shapes to generic text.
+/// - panics: none.
 fn parse_auto(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     if input.trim().is_empty() {
@@ -125,12 +115,12 @@ fn parse_auto(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// Probe cargo newline-delimited JSON when cargo-shaped fields are present.
 ///
 /// # Contract
-/// - Preconditions: `input` is non-empty UTF-8 text.
-/// - Postconditions: returns [`AutoProbe::NoMatch`] unless a cargo
-///   compiler-message shape marker is present.
-/// - Failure modes: malformed cargo-shaped JSON becomes [`AutoProbe::Invalid`]
-///   so auto mode cannot fall through to generic lines.
-/// - Panics: none.
+/// - requires: `input` is non-empty UTF-8 text.
+/// - ensures: returns [`AutoProbe::NoMatch`] unless a cargo compiler-message
+///   shape marker is present.
+/// - fails: malformed cargo-shaped JSON becomes [`AutoProbe::Invalid`] so auto
+///   mode cannot fall through to generic lines.
+/// - panics: none.
 fn probe_cargo_json(input: &str) -> AutoProbe
 {
     if input.lines().any(is_cargo_json_line) {
@@ -144,12 +134,12 @@ fn probe_cargo_json(input: &str) -> AutoProbe
 /// Probe complete JSON payloads for native and LSP diagnostic shapes.
 ///
 /// # Contract
-/// - Preconditions: `input` is non-empty UTF-8 text.
-/// - Postconditions: returns [`AutoProbe::NoMatch`] for non-JSON-looking text;
+/// - requires: `input` is non-empty UTF-8 text.
+/// - ensures: returns [`AutoProbe::NoMatch`] for non-JSON-looking text;
 ///   otherwise a supported structured match or an invalid structured error.
-/// - Failure modes: malformed or unsupported JSON-looking diagnostics become
+/// - fails: malformed or unsupported JSON-looking diagnostics become
 ///   [`AutoProbe::Invalid`] instead of generic text diagnostics.
-/// - Panics: none.
+/// - panics: none.
 fn probe_complete_json(input: &str) -> AutoProbe
 {
     if !looks_like_complete_json(input) {
@@ -181,13 +171,13 @@ fn probe_complete_json(input: &str) -> AutoProbe
 /// Parse native normalized `aifix` JSON.
 ///
 /// # Contract
-/// - Preconditions: `input` contains a JSON value produced by `aifix` or
-///   matching its normalized model.
-/// - Postconditions: returns diagnostics from a digest, diagnostic array,
-///   single diagnostic, or diagnostics property.
-/// - Failure modes: returns JSON errors for malformed JSON or parser errors
-///   when no diagnostics shape is present.
-/// - Panics: none.
+/// - requires: `input` contains a JSON value produced by `aifix` or matching
+///   its normalized model.
+/// - ensures: returns diagnostics from a digest, diagnostic array, single
+///   diagnostic, or diagnostics property.
+/// - fails: returns JSON errors for malformed JSON or parser errors when no
+///   diagnostics shape is present.
+/// - panics: none.
 fn parse_aifix_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     parse_aifix_value(&parse_json_value(input)?)
@@ -196,13 +186,13 @@ fn parse_aifix_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// Convert native normalized `aifix` JSON into diagnostics.
 ///
 /// # Contract
-/// - Preconditions: `value` is a parsed JSON value produced by `aifix` or
-///   matching its normalized model.
-/// - Postconditions: returns diagnostics from a digest, diagnostic array,
-///   single diagnostic, or diagnostics property.
-/// - Failure modes: returns JSON errors for malformed model-shaped values or a
-///   parser error when no diagnostics shape is present.
-/// - Panics: none.
+/// - requires: `value` is a parsed JSON value produced by `aifix` or matching
+///   its normalized model.
+/// - ensures: returns diagnostics from a digest, diagnostic array, single
+///   diagnostic, or diagnostics property.
+/// - fails: returns JSON errors for malformed model-shaped values or a parser
+///   error when no diagnostics shape is present.
+/// - panics: none.
 fn parse_aifix_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 {
     if let Ok(digest) = serde_json::from_value::<Digest>(value.to_owned()) {
@@ -225,15 +215,15 @@ fn parse_aifix_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 /// Parse newline-delimited cargo compiler-message JSON.
 ///
 /// # Contract
-/// - Preconditions: non-empty lines may contain cargo JSON events, unrelated
-///   cargo output, or truncated/noisy stream fragments.
-/// - Postconditions: returns normalized compiler-message diagnostics, ignores
-///   other cargo message reasons, and retains valid diagnostics even when
-///   adjacent lines are malformed.
-/// - Failure modes: returns the first JSON/parser error when no valid
-///   compiler-message diagnostic can be recovered, or a parser error when
-///   non-empty input contains no JSON messages.
-/// - Panics: none.
+/// - requires: non-empty lines may contain cargo JSON events, unrelated cargo
+///   output, or truncated/noisy stream fragments.
+/// - ensures: returns normalized compiler-message diagnostics, ignores other
+///   cargo message reasons, and retains valid diagnostics even when adjacent
+///   lines are malformed.
+/// - fails: returns the first JSON/parser error when no valid compiler-message
+///   diagnostic can be recovered, or a parser error when non-empty input
+///   contains no JSON messages.
+/// - panics: none.
 fn parse_clippy_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     let mut diagnostics = Vec::new();
@@ -295,12 +285,12 @@ fn parse_clippy_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// Convert one rustc compiler message object into a normalized diagnostic.
 ///
 /// # Contract
-/// - Preconditions: `message` is the `message` object from a cargo
+/// - requires: `message` is the `message` object from a cargo
 ///   `compiler-message` event and `raw` is the original event.
-/// - Postconditions: returns a diagnostic with a non-empty message and
-///   preserved raw JSON when a message is available.
-/// - Failure modes: returns `None` when the message text is absent or blank.
-/// - Panics: none.
+/// - ensures: returns a diagnostic with a non-empty message and preserved raw
+///   JSON when a message is available.
+/// - fails: returns `None` when the message text is absent or blank.
+/// - panics: none.
 fn compiler_message_to_diagnostic(
     message: &Value,
     raw: Value,
@@ -337,14 +327,6 @@ fn compiler_message_to_diagnostic(
 }
 
 /// Determine whether a Rust diagnostic came from clippy or rustc.
-///
-/// # Contract
-/// - Preconditions: `message` is the already-normalized non-empty diagnostic
-///   text.
-/// - Postconditions: returns either `clippy` for clippy-tagged diagnostics or
-///   `rustc` otherwise.
-/// - Failure modes: none.
-/// - Panics: none.
 fn rust_source_name(
     code: Option<&str>,
     message: &str,
@@ -365,11 +347,11 @@ fn rust_source_name(
 /// Extract primary compiler spans.
 ///
 /// # Contract
-/// - Preconditions: `spans` is the optional rustc `spans` JSON array.
-/// - Postconditions: returns only primary spans that can be normalized without
-///   direct indexing.
-/// - Failure modes: malformed or missing spans are skipped.
-/// - Panics: none.
+/// - requires: `spans` is the optional rustc `spans` JSON array.
+/// - ensures: returns only primary spans that can be normalized without direct
+///   indexing.
+/// - fails: malformed or missing spans are skipped.
+/// - panics: none.
 fn compiler_spans(spans: Option<&Value>) -> Vec<Span>
 {
     spans
@@ -390,11 +372,11 @@ fn compiler_spans(spans: Option<&Value>) -> Vec<Span>
 /// Extract machine suggestions from compiler spans.
 ///
 /// # Contract
-/// - Preconditions: `spans` is the optional rustc `spans` JSON array.
-/// - Postconditions: returns suggestions for spans with
-///   `suggested_replacement`, preserving span data when available.
-/// - Failure modes: spans without replacement text are skipped.
-/// - Panics: none.
+/// - requires: `spans` is the optional rustc `spans` JSON array.
+/// - ensures: returns suggestions for spans with `suggested_replacement`,
+///   preserving span data when available.
+/// - fails: spans without replacement text are skipped.
+/// - panics: none.
 fn compiler_suggestions(spans: Option<&Value>) -> Vec<Suggestion>
 {
     spans
@@ -421,11 +403,11 @@ fn compiler_suggestions(spans: Option<&Value>) -> Vec<Suggestion>
 /// Convert one compiler span object to a normalized span.
 ///
 /// # Contract
-/// - Preconditions: `span` is a rustc span object with a `file_name` string.
-/// - Postconditions: returns a span with one-based rustc coordinates copied
-///   when present.
-/// - Failure modes: returns `None` when `file_name` is missing or not a string.
-/// - Panics: none.
+/// - requires: `span` is a rustc span object with a `file_name` string.
+/// - ensures: returns a span with one-based rustc coordinates copied when
+///   present.
+/// - fails: returns `None` when `file_name` is missing or not a string.
+/// - panics: none.
 fn compiler_span(span: &Value) -> Option<Span>
 {
     let file = first_non_empty_string(span, &["file_name"])?;
@@ -445,12 +427,12 @@ fn compiler_span(span: &Value) -> Option<Span>
 /// Parse TypeScript plain-text diagnostics.
 ///
 /// # Contract
-/// - Preconditions: `input` is UTF-8 TypeScript compiler text output.
-/// - Postconditions: returns diagnostics parsed from `path(line,column):
-///   severity TScode: message` lines.
-/// - Failure modes: returns a parser error when non-empty input contains no
-///   TypeScript diagnostics.
-/// - Panics: none.
+/// - requires: `input` is UTF-8 TypeScript compiler text output.
+/// - ensures: returns diagnostics parsed from `path(line,column): severity
+///   TScode: message` lines.
+/// - fails: returns a parser error when non-empty input contains no TypeScript
+///   diagnostics.
+/// - panics: none.
 fn parse_typescript_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     let diagnostics = input
@@ -474,12 +456,12 @@ fn parse_typescript_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// Parse one `path(line,column): error TS1234: message` line.
 ///
 /// # Contract
-/// - Preconditions: `line` is one logical TypeScript diagnostic line.
-/// - Postconditions: returns a normalized `tsc` diagnostic with one span when
-///   the line matches.
-/// - Failure modes: returns `None` for malformed positions, missing severity,
-///   or missing `TS` code/message.
-/// - Panics: none; all string slicing is checked.
+/// - requires: `line` is one logical TypeScript diagnostic line.
+/// - ensures: returns a normalized `tsc` diagnostic with one span when the line
+///   matches.
+/// - fails: returns `None` for malformed positions, missing severity, or
+///   missing `TS` code/message.
+/// - panics: none; all string slicing is checked.
 fn parse_typescript_line(line: &str) -> Option<Diagnostic>
 {
     let open = line.find('(')?;
@@ -519,13 +501,6 @@ fn parse_typescript_line(line: &str) -> Option<Diagnostic>
 }
 
 /// Split the TypeScript severity prefix from a diagnostic line.
-///
-/// # Contract
-/// - Preconditions: `rest` begins after the TypeScript location prefix.
-/// - Postconditions: returns normalized severity and the remainder after the
-///   severity word.
-/// - Failure modes: returns `None` for unsupported severities.
-/// - Panics: none.
 fn split_typescript_severity(rest: &str) -> Option<(Severity, &str)>
 {
     match rest.strip_prefix("error ") {
@@ -537,13 +512,6 @@ fn split_typescript_severity(rest: &str) -> Option<(Severity, &str)>
 }
 
 /// Split a TypeScript code and message body.
-///
-/// # Contract
-/// - Preconditions: `rest` begins after the TypeScript severity prefix.
-/// - Postconditions: returns an owned `TS...` code and non-empty message.
-/// - Failure modes: returns `None` when the delimiter, TS code, or message is
-///   missing.
-/// - Panics: none; all string slicing is checked.
 fn split_code_message(rest: &str) -> Option<(String, String)>
 {
     let delimiter = rest.find(':')?;
@@ -563,13 +531,13 @@ fn split_code_message(rest: &str) -> Option<(String, String)>
 /// Parse LSP diagnostic arrays, wrapper objects, or publishDiagnostics params.
 ///
 /// # Contract
-/// - Preconditions: `input` is JSON containing an array, `diagnostics`, or
+/// - requires: `input` is JSON containing an array, `diagnostics`, or
 ///   `params.diagnostics`.
-/// - Postconditions: returns normalized diagnostics and uses wrapper URI as a
-///   fallback span file.
-/// - Failure modes: returns JSON errors for malformed JSON or parser errors for
+/// - ensures: returns normalized diagnostics and uses wrapper URI as a fallback
+///   span file.
+/// - fails: returns JSON errors for malformed JSON or parser errors for
 ///   missing/non-array diagnostics.
-/// - Panics: none.
+/// - panics: none.
 fn parse_lsp_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     parse_lsp_value(&parse_json_value(input)?)
@@ -578,13 +546,13 @@ fn parse_lsp_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// Convert parsed LSP JSON into normalized diagnostics.
 ///
 /// # Contract
-/// - Preconditions: `value` contains an LSP diagnostic array, wrapper object,
-///   or publishDiagnostics params object.
-/// - Postconditions: returns normalized diagnostics and uses wrapper URI as a
-///   fallback span file.
-/// - Failure modes: returns parser errors for missing/non-array diagnostics,
-///   blank messages, malformed ranges, or reversed ranges.
-/// - Panics: none.
+/// - requires: `value` contains an LSP diagnostic array, wrapper object, or
+///   publishDiagnostics params object.
+/// - ensures: returns normalized diagnostics and uses wrapper URI as a fallback
+///   span file.
+/// - fails: returns parser errors for missing/non-array diagnostics, blank
+///   messages, malformed ranges, or reversed ranges.
+/// - panics: none.
 fn parse_lsp_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 {
     let fallback_uri = lsp_fallback_uri(value);
@@ -607,12 +575,11 @@ fn parse_lsp_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 /// Return the diagnostics member from a parsed LSP payload.
 ///
 /// # Contract
-/// - Preconditions: `value` is parsed JSON from an LSP adapter boundary.
-/// - Postconditions: returns the array candidate from an array, `diagnostics`,
-///   or `params.diagnostics` shape without cloning it.
-/// - Failure modes: returns a parser error when no LSP diagnostics field is
-///   present.
-/// - Panics: none.
+/// - requires: `value` is parsed JSON from an LSP adapter boundary.
+/// - ensures: returns the array candidate from an array, `diagnostics`, or
+///   `params.diagnostics` shape without cloning it.
+/// - fails: returns a parser error when no LSP diagnostics field is present.
+/// - panics: none.
 fn lsp_diagnostics_value(value: &Value) -> Result<&Value, AifixError>
 {
     if value.is_array() {
@@ -632,13 +599,6 @@ fn lsp_diagnostics_value(value: &Value) -> Result<&Value, AifixError>
 }
 
 /// Return the URI used for LSP span file fallback.
-///
-/// # Contract
-/// - Preconditions: `value` is parsed JSON from an LSP adapter boundary.
-/// - Postconditions: returns top-level `uri`, then `params.uri`, preserving the
-///   original URI text.
-/// - Failure modes: returns `None` when no URI string is present.
-/// - Panics: none.
 fn lsp_fallback_uri(value: &Value) -> Option<String>
 {
     value
@@ -656,13 +616,13 @@ fn lsp_fallback_uri(value: &Value) -> Option<String>
 /// Convert one LSP diagnostic object into a normalized diagnostic.
 ///
 /// # Contract
-/// - Preconditions: `value` is an LSP diagnostic object and `fallback_uri` is
-///   the enclosing URI when present.
-/// - Postconditions: returns a diagnostic with preserved raw JSON and one
-///   validated normalized span.
-/// - Failure modes: returns a parser error when message text is absent, blank,
-///   or when range validation fails.
-/// - Panics: none.
+/// - requires: `value` is an LSP diagnostic object and `fallback_uri` is the
+///   enclosing URI when present.
+/// - ensures: returns a diagnostic with preserved raw JSON and one validated
+///   normalized span.
+/// - fails: returns a parser error when message text is absent, blank, or when
+///   range validation fails.
+/// - panics: none.
 fn lsp_diagnostic(
     value: &Value,
     fallback_uri: Option<&str>,
@@ -704,13 +664,6 @@ fn lsp_diagnostic(
 }
 
 /// Convert LSP numeric severity into normalized severity.
-///
-/// # Contract
-/// - Preconditions: `value` is the numeric severity from an LSP diagnostic.
-/// - Postconditions: maps 1 through 4 to LSP severities and unknown values to
-///   info.
-/// - Failure modes: none.
-/// - Panics: none.
 fn lsp_severity(value: u64) -> Severity
 {
     match value {
@@ -724,13 +677,13 @@ fn lsp_severity(value: u64) -> Severity
 /// Convert an LSP zero-based range and optional URI into a normalized span.
 ///
 /// # Contract
-/// - Preconditions: `range` follows the LSP shape with a `start` object;
-///   coordinates are zero-based.
-/// - Postconditions: returns a span with validated one-based coordinates and an
-///   empty file only when no URI is available.
-/// - Failure modes: returns a parser error when range objects, coordinates,
-///   one-based conversion, or ordering are invalid.
-/// - Panics: none.
+/// - requires: `range` follows the LSP shape with a `start` object; coordinates
+///   are zero-based.
+/// - ensures: returns a span with validated one-based coordinates and an empty
+///   file only when no URI is available.
+/// - fails: returns a parser error when range objects, coordinates, one-based
+///   conversion, or ordering are invalid.
+/// - panics: none.
 fn lsp_span(
     range: Option<&Value>,
     uri: Option<&str>,
@@ -779,13 +732,13 @@ fn lsp_span(
 /// Parse Nushell linter text, or generic non-empty diagnostic lines.
 ///
 /// # Contract
-/// - Preconditions: `input` is UTF-8 diagnostic text with one diagnostic per
+/// - requires: `input` is UTF-8 diagnostic text with one diagnostic per
 ///   non-empty line.
-/// - Postconditions: returns one normalized Nushell diagnostic per non-empty
-///   trimmed line.
-/// - Failure modes: returns a parser error only when non-empty input yields no
+/// - ensures: returns one normalized Nushell diagnostic per non-empty trimmed
+///   line.
+/// - fails: returns a parser error only when non-empty input yields no
 ///   diagnostics.
-/// - Panics: none.
+/// - panics: none.
 fn parse_nushell_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     let diagnostics = input
@@ -809,13 +762,6 @@ fn parse_nushell_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 }
 
 /// Infer severity from a generic diagnostic line.
-///
-/// # Contract
-/// - Preconditions: `line` is a non-empty trimmed diagnostic line.
-/// - Postconditions: returns error for lines containing `error`, warning for
-///   `warn`, and info otherwise.
-/// - Failure modes: none.
-/// - Panics: none.
 fn line_severity(line: &str) -> Severity
 {
     debug_assert!(
@@ -837,12 +783,12 @@ fn line_severity(line: &str) -> Severity
 /// Return whether a line has cargo JSON shape markers.
 ///
 /// # Contract
-/// - Preconditions: `line` is one logical input line.
-/// - Postconditions: returns true only for non-empty lines that look like JSON
-///   objects and mention cargo's `reason` or `compiler-message` fields.
-/// - Failure modes: none; malformed JSON can still return true so the cargo
-///   parser reports the real structured error.
-/// - Panics: none.
+/// - requires: `line` is one logical input line.
+/// - ensures: returns true only for non-empty lines that look like JSON objects
+///   and mention cargo's `reason` or `compiler-message` fields; malformed JSON
+///   can still return true so the cargo parser reports the real structured
+///   error.
+/// - panics: none.
 fn is_cargo_json_line(line: &str) -> bool
 {
     let trimmed = line.trim_start();
@@ -851,26 +797,12 @@ fn is_cargo_json_line(line: &str) -> bool
 }
 
 /// Return whether input starts with a complete-JSON delimiter.
-///
-/// # Contract
-/// - Preconditions: `input` is non-empty UTF-8 text.
-/// - Postconditions: returns true for object or array starts after leading
-///   whitespace.
-/// - Failure modes: none; malformed JSON-looking text still returns true.
-/// - Panics: none.
 fn looks_like_complete_json(input: &str) -> bool
 {
     matches!(input.trim_start().as_bytes().first(), Some(b'{' | b'['))
 }
 
 /// Return whether parsed JSON has an LSP diagnostics shape.
-///
-/// # Contract
-/// - Preconditions: `value` is parsed JSON.
-/// - Postconditions: returns true for diagnostic arrays, URI-qualified wrapper
-///   diagnostics, or publishDiagnostics params with LSP markers.
-/// - Failure modes: none; malformed matching shapes are left for LSP parsing.
-/// - Panics: none.
 fn lsp_json_shape(value: &Value) -> bool
 {
     if value.is_array() {
@@ -892,13 +824,6 @@ fn lsp_json_shape(value: &Value) -> bool
 }
 
 /// Return whether a value looks like an LSP diagnostics array.
-///
-/// # Contract
-/// - Preconditions: `value` is parsed JSON.
-/// - Postconditions: returns true for arrays that contain a diagnostic with an
-///   LSP range marker.
-/// - Failure modes: none.
-/// - Panics: none.
 fn lsp_diagnostics_shape(value: &Value) -> bool
 {
     value
@@ -907,12 +832,6 @@ fn lsp_diagnostics_shape(value: &Value) -> bool
 }
 
 /// Return whether a value looks like one LSP diagnostic object.
-///
-/// # Contract
-/// - Preconditions: `value` is parsed JSON.
-/// - Postconditions: returns true when an LSP diagnostic range is present.
-/// - Failure modes: none.
-/// - Panics: none.
 fn lsp_diagnostic_shape(value: &Value) -> bool
 {
     value.get("range").is_some()
@@ -921,25 +840,16 @@ fn lsp_diagnostic_shape(value: &Value) -> bool
 /// Parse a complete JSON value from input.
 ///
 /// # Contract
-/// - Preconditions: `input` is intended to contain one complete JSON value.
-/// - Postconditions: returns the parsed [`Value`] without modifying source
-///   text.
-/// - Failure modes: returns [`AifixError::Json`] for malformed or incomplete
-///   JSON.
-/// - Panics: none.
+/// - requires: `input` is intended to contain one complete JSON value.
+/// - ensures: returns the parsed [`Value`] without modifying source text.
+/// - fails: returns [`AifixError::Json`] for malformed or incomplete JSON.
+/// - panics: none.
 fn parse_json_value(input: &str) -> Result<Value, AifixError>
 {
     serde_json::from_str(input).map_err(AifixError::Json)
 }
 
 /// Return the first string property found on a JSON object.
-///
-/// # Contract
-/// - Preconditions: `keys` is ordered by caller preference and may be empty.
-/// - Postconditions: returns an owned copy of the first matching string value.
-/// - Failure modes: returns `None` when no key exists or matching values are
-///   not strings.
-/// - Panics: none.
 fn first_string(
     value: &Value,
     keys: &[&str],
@@ -951,14 +861,6 @@ fn first_string(
 }
 
 /// Return the first non-empty string property found on a JSON object.
-///
-/// # Contract
-/// - Preconditions: `keys` is ordered by caller preference and may be empty.
-/// - Postconditions: trims surrounding whitespace and returns an owned copy of
-///   the first matching non-empty string value.
-/// - Failure modes: returns `None` when no key exists, matching values are not
-///   strings, or all matching strings are blank.
-/// - Panics: none.
 fn first_non_empty_string(
     value: &Value,
     keys: &[&str],
@@ -970,14 +872,6 @@ fn first_non_empty_string(
 }
 
 /// Return trimmed owned text when it is not empty.
-///
-/// # Contract
-/// - Preconditions: `value` is external text that may include surrounding
-///   whitespace.
-/// - Postconditions: returns owned trimmed text only when at least one
-///   non-whitespace scalar is present.
-/// - Failure modes: returns `None` for blank text.
-/// - Panics: none.
 fn non_empty_trimmed_owned(value: &str) -> Option<String>
 {
     let trimmed = value.trim();
@@ -985,14 +879,6 @@ fn non_empty_trimmed_owned(value: &str) -> Option<String>
 }
 
 /// Convert a JSON number to `u32` without panicking.
-///
-/// # Contract
-/// - Preconditions: `value` may point to any JSON value.
-/// - Postconditions: returns the value only when it is an unsigned integer that
-///   fits in `u32`.
-/// - Failure modes: returns `None` for missing, non-numeric, negative,
-///   fractional, or overflowing values.
-/// - Panics: none.
 fn json_u32(value: Option<&Value>) -> Option<u32>
 {
     let number = value?.as_u64()?;
@@ -1000,13 +886,6 @@ fn json_u32(value: Option<&Value>) -> Option<u32>
 }
 
 /// Parse a decimal `u32` from text.
-///
-/// # Contract
-/// - Preconditions: `value` is a textual coordinate candidate.
-/// - Postconditions: trims surrounding whitespace before parsing.
-/// - Failure modes: returns `None` for non-decimal, negative, fractional, or
-///   overflowing values.
-/// - Panics: none.
 fn parse_u32_str(value: &str) -> Option<u32>
 {
     value.trim().parse::<u32>().ok()
@@ -1015,11 +894,10 @@ fn parse_u32_str(value: &str) -> Option<u32>
 /// Convert a zero-based coordinate into a one-based coordinate.
 ///
 /// # Contract
-/// - Preconditions: `value` is a zero-based coordinate from an external
-///   protocol.
-/// - Postconditions: returns `value + 1` when representable.
-/// - Failure modes: returns `None` on `u32::MAX` overflow instead of panicking.
-/// - Panics: none.
+/// - requires: `value` is a zero-based coordinate from an external protocol.
+/// - ensures: returns `value + 1` when representable.
+/// - fails: returns `None` on `u32::MAX` overflow instead of panicking.
+/// - panics: none.
 fn one_based(value: u32) -> Option<u32>
 {
     value.checked_add(1)
@@ -1034,13 +912,6 @@ mod tests
     use crate::model::Protocol;
 
     /// Require a condition in adapter unit tests without panicking directly.
-    ///
-    /// # Contract
-    /// - Preconditions: `message` describes the failed invariant.
-    /// - Postconditions: returns `Ok(())` when `condition` is true.
-    /// - Failure modes: returns [`AifixError::Parser`] when `condition` is
-    ///   false.
-    /// - Panics: none.
     fn require(
         condition: bool,
         message: &str,
@@ -1055,14 +926,6 @@ mod tests
     }
 
     /// Auto mode rejects malformed structured JSON instead of generic fallback.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms LSP-shaped blank messages are parser errors
-    ///   under auto detection.
-    /// - Failure modes: returns a parser error when auto mode falls through to
-    ///   generic diagnostics or returns the wrong error category.
-    /// - Panics: none.
     #[test]
     fn auto_rejects_malformed_structured_json() -> Result<(), AifixError>
     {
@@ -1080,14 +943,6 @@ mod tests
     }
 
     /// Cargo auto parsing keeps valid compiler diagnostics beside noisy lines.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms one valid compiler-message survives adjacent
-    ///   cargo events, plain noise, and truncated JSON.
-    /// - Failure modes: returns a parser error if auto mode drops the valid
-    ///   diagnostic or classifies the source incorrectly.
-    /// - Panics: none.
     #[test]
     fn auto_cargo_stream_retains_diagnostics_with_noise() -> Result<(), AifixError>
     {
@@ -1119,14 +974,6 @@ mod tests
     }
 
     /// Cargo auto parsing rejects malformed structured streams with no payload.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms cargo-looking malformed JSON does not fall
-    ///   through to generic text when no valid compiler-message exists.
-    /// - Failure modes: returns a parser error if auto mode accepts the input
-    ///   or reports the wrong error category.
-    /// - Panics: none.
     #[test]
     fn auto_cargo_malformed_only_is_rejected() -> Result<(), AifixError>
     {
@@ -1144,14 +991,6 @@ mod tests
     }
 
     /// LSP normalization falls back from blank source to `lsp`.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms blank source text is normalized before
-    ///   [`Diagnostic::new`] is called.
-    /// - Failure modes: returns a parser error when the diagnostic is missing
-    ///   or the source fallback is not applied.
-    /// - Panics: none.
     #[test]
     fn lsp_blank_source_defaults_to_lsp() -> Result<(), AifixError>
     {
@@ -1171,14 +1010,6 @@ mod tests
     }
 
     /// LSP normalization rejects reversed ranges before constructing spans.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms reversed ranges return a parser error instead
-    ///   of reaching [`Span::new`].
-    /// - Failure modes: returns a parser error when reversed ranges are
-    ///   accepted or classified incorrectly.
-    /// - Panics: none.
     #[test]
     fn lsp_rejects_reversed_ranges() -> Result<(), AifixError>
     {
@@ -1196,14 +1027,6 @@ mod tests
     }
 
     /// TypeScript parsing rejects empty external fields before model creation.
-    ///
-    /// # Contract
-    /// - Preconditions: parser helpers are available in the test build.
-    /// - Postconditions: confirms blank file, code, and message positions fail
-    ///   parsing rather than constructing invalid diagnostics.
-    /// - Failure modes: returns a parser error when any malformed TypeScript
-    ///   line is accepted.
-    /// - Panics: none.
     #[test]
     fn typescript_rejects_empty_external_fields() -> Result<(), AifixError>
     {

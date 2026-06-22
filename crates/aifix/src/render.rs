@@ -18,24 +18,17 @@ use crate::model::Span;
 use crate::model::Suggestion;
 
 /// Default compact-mode sample cap per group.
-///
-/// # Contract
-/// Preconditions: constant is positive so compact output keeps representative
-/// samples by default.
-/// Postconditions: used only as a renderer cap, never as a digest count.
-/// Failure modes: using the constant has no failure path.
-/// Panics: none.
 const DEFAULT_COMPACT_SAMPLE_LIMIT: usize = 3;
 
 /// Render a digest in the requested output format.
 ///
 /// # Contract
-/// Preconditions: `digest` is a fully constructed model value.
-/// Postconditions: returns the selected representation using the default
-/// compact sample cap when compact JSON is requested.
-/// Failure modes: returns JSON serialization errors for JSON formats.
-/// Panics: debug builds may panic if the selected renderer violates documented
-/// output invariants.
+/// - requires: `digest` is a fully constructed model value.
+/// - ensures: returns the selected representation using the default compact
+///   sample cap when compact JSON is requested.
+/// - fails: returns JSON serialization errors for JSON formats.
+/// - panics: debug builds may panic if the selected renderer violates
+///   documented output invariants.
 ///
 /// # Errors
 /// Returns an error when JSON or compact JSON serialization fails.
@@ -51,13 +44,13 @@ pub fn render_digest(
 /// Render a digest, overriding compact JSON's sample cap.
 ///
 /// # Contract
-/// Preconditions: `digest` is a fully constructed model value and
-/// `compact_sample_limit` is the desired per-group compact sample cap.
-/// Postconditions: preserves full JSON exactly, omits raw payloads in compact
-/// JSON, and emits Markdown text for Markdown output.
-/// Failure modes: returns JSON serialization errors for JSON formats.
-/// Panics: debug builds may panic if the selected renderer violates documented
-/// output or compact sample invariants.
+/// - requires: `digest` is a fully constructed model value and
+///   `compact_sample_limit` is the desired per-group compact sample cap.
+/// - ensures: preserves full JSON exactly, omits raw payloads in compact JSON,
+///   and emits Markdown text for Markdown output.
+/// - fails: returns JSON serialization errors for JSON formats.
+/// - panics: debug builds may panic if the selected renderer violates
+///   documented output or compact sample invariants.
 ///
 /// # Errors
 /// Returns an error when JSON or compact JSON serialization fails.
@@ -78,12 +71,12 @@ pub fn render_digest_with_sample_limit(
 /// Render compact JSON with no raw diagnostic payloads.
 ///
 /// # Contract
-/// Preconditions: `digest` is a fully constructed model value.
-/// Postconditions: serializes a compact borrowed mirror whose group samples are
-/// capped by `sample_limit` and whose invocation omits stdout/stderr bodies.
-/// Failure modes: returns a JSON serialization error when serialization fails.
-/// Panics: debug builds may panic if compact group construction violates the
-/// sample cap invariant.
+/// - requires: `digest` is a fully constructed model value.
+/// - ensures: serializes a compact borrowed mirror whose group samples are
+///   capped by `sample_limit` and whose invocation omits stdout/stderr bodies.
+/// - fails: returns a JSON serialization error when serialization fails.
+/// - panics: debug builds may panic if compact group construction violates the
+///   sample cap invariant.
 ///
 /// # Errors
 /// Returns an error when compact JSON serialization fails.
@@ -99,12 +92,11 @@ fn render_compact_json(
 /// Render grouped Markdown guidance for agents.
 ///
 /// # Contract
-/// Preconditions: `digest` is a fully constructed model value.
-/// Postconditions: returns Markdown containing invocation, count, group,
-/// explain, and sample sections without mutating the digest.
-/// Failure modes: none.
-/// Panics: debug builds may panic if the Markdown heading or trailing newline
-/// invariant is violated.
+/// - requires: `digest` is a fully constructed model value.
+/// - ensures: returns Markdown containing invocation, count, group, explain,
+///   and sample sections without mutating the digest.
+/// - panics: debug builds may panic if the Markdown heading or trailing newline
+///   invariant is violated.
 fn render_markdown(digest: &Digest) -> String
 {
     let mut markdown = String::new();
@@ -191,13 +183,6 @@ fn render_markdown(digest: &Digest) -> String
 }
 
 /// Compact digest representation that omits raw JSON payloads.
-///
-/// # Contract
-/// Preconditions: borrowed from a full digest for a single render call.
-/// Postconditions: serializes invocation metadata, counts, and compact groups
-/// without raw diagnostic payloads.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Serialize)]
 struct CompactDigest<'digest>
 {
@@ -210,24 +195,17 @@ struct CompactDigest<'digest>
 }
 
 /// Borrowing constructors for compact digest rendering.
-///
-/// # Contract
-/// Preconditions: implemented for borrowed compact digest mirrors.
-/// Postconditions: constructors preserve borrowed digest relationships.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors document their debug-only assertions precisely.
 impl<'digest> CompactDigest<'digest>
 {
     /// Borrow compact data from a full digest.
     ///
     /// # Contract
-    /// Preconditions: `digest` is valid for `'digest` and `sample_limit` is the
-    /// desired per-group cap.
-    /// Postconditions: returns a borrowed compact mirror with one compact group
-    /// per source group.
-    /// Failure modes: none.
-    /// Panics: debug builds may panic if compact group construction violates
-    /// the sample cap invariant.
+    /// - requires: `digest` is valid for `'digest` and `sample_limit` is the
+    ///   desired per-group cap.
+    /// - ensures: returns a borrowed compact mirror with one compact group per
+    ///   source group.
+    /// - panics: debug builds may panic if compact group construction violates
+    ///   the sample cap invariant.
     fn new(
         digest: &'digest Digest,
         sample_limit: usize,
@@ -246,13 +224,6 @@ impl<'digest> CompactDigest<'digest>
 }
 
 /// Compact invocation metadata without captured stdout/stderr bodies.
-///
-/// # Contract
-/// Preconditions: borrowed from a full invocation for a single render call.
-/// Postconditions: exposes command and byte counts while omitting captured
-/// stdout and stderr text.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Serialize)]
 struct CompactInvocation<'digest>
 {
@@ -269,22 +240,9 @@ struct CompactInvocation<'digest>
 }
 
 /// Borrowing constructors for compact invocation rendering.
-///
-/// # Contract
-/// Preconditions: implemented for borrowed invocation mirrors.
-/// Postconditions: constructors omit captured output bodies.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors do not panic.
 impl<'digest> CompactInvocation<'digest>
 {
     /// Borrow compact invocation metadata from a full invocation.
-    ///
-    /// # Contract
-    /// Preconditions: `invocation` is valid for `'digest`.
-    /// Postconditions: returns borrowed command/cwd metadata and byte counts
-    /// for stdout and stderr without copying captured output bodies.
-    /// Failure modes: none.
-    /// Panics: none.
     fn new(invocation: &'digest Invocation) -> Self
     {
         Self {
@@ -298,13 +256,6 @@ impl<'digest> CompactInvocation<'digest>
 }
 
 /// Compact group representation with capped samples.
-///
-/// # Contract
-/// Preconditions: borrowed from a full group for a single render call.
-/// Postconditions: contains borrowed group metadata and an owned, capped
-/// compact diagnostic sample vector.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Serialize)]
 struct CompactGroup<'digest>
 {
@@ -325,24 +276,17 @@ struct CompactGroup<'digest>
 }
 
 /// Borrowing constructors for compact group rendering.
-///
-/// # Contract
-/// Preconditions: implemented for borrowed compact group mirrors.
-/// Postconditions: constructors enforce requested sample caps.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors document their debug-only assertions precisely.
 impl<'digest> CompactGroup<'digest>
 {
     /// Borrow compact group data from a full group.
     ///
     /// # Contract
-    /// Preconditions: `group` is valid for `'digest` and `sample_limit` is the
-    /// desired per-group cap.
-    /// Postconditions: returns borrowed group metadata with diagnostics capped
-    /// to at most `sample_limit`.
-    /// Failure modes: none.
-    /// Panics: debug builds may panic if compact diagnostics exceed the
-    /// requested sample cap.
+    /// - requires: `group` is valid for `'digest` and `sample_limit` is the
+    ///   desired per-group cap.
+    /// - ensures: returns borrowed group metadata with diagnostics capped to at
+    ///   most `sample_limit`.
+    /// - panics: debug builds may panic if compact diagnostics exceed the
+    ///   requested sample cap.
     fn new(
         group: &'digest Group,
         sample_limit: usize,
@@ -372,12 +316,6 @@ impl<'digest> CompactGroup<'digest>
 }
 
 /// Compact diagnostic representation without raw tool JSON.
-///
-/// # Contract
-/// Preconditions: borrowed from a full diagnostic for a single render call.
-/// Postconditions: exposes normalized fields and omits the raw tool payload.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Serialize)]
 struct CompactDiagnostic<'digest>
 {
@@ -396,22 +334,9 @@ struct CompactDiagnostic<'digest>
 }
 
 /// Borrowing constructors for compact diagnostic rendering.
-///
-/// # Contract
-/// Preconditions: implemented for borrowed diagnostic mirrors.
-/// Postconditions: constructors omit raw diagnostic payloads.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors do not panic.
 impl<'digest> CompactDiagnostic<'digest>
 {
     /// Borrow compact diagnostic data from a full diagnostic.
-    ///
-    /// # Contract
-    /// Preconditions: `diagnostic` is valid for `'digest`.
-    /// Postconditions: returns borrowed diagnostic fields while omitting raw
-    /// tool payloads.
-    /// Failure modes: none.
-    /// Panics: none.
     fn new(diagnostic: &'digest Diagnostic) -> Self
     {
         Self {
@@ -428,11 +353,10 @@ impl<'digest> CompactDiagnostic<'digest>
 /// Build a concise group heading.
 ///
 /// # Contract
-/// Preconditions: `group` is a normalized digest group.
-/// Postconditions: returns a single-line heading using code when present,
-/// codeless message fallback when present, and source otherwise.
-/// Failure modes: none.
-/// Panics: none.
+/// - requires: `group` is a normalized digest group.
+/// - ensures: returns a single-line heading using code when present, codeless
+///   message fallback when present, and source otherwise.
+/// - panics: none.
 fn group_heading(group: &Group) -> String
 {
     match (group.code.as_deref(), group.message.as_deref()) {
@@ -445,11 +369,10 @@ fn group_heading(group: &Group) -> String
 /// Render one source span for Markdown.
 ///
 /// # Contract
-/// Preconditions: `span` is a normalized source span.
-/// Postconditions: returns `file`, `file:line`, or `file:line:column` depending
-/// on available position metadata.
-/// Failure modes: none.
-/// Panics: none.
+/// - requires: `span` is a normalized source span.
+/// - ensures: returns `file`, `file:line`, or `file:line:column` depending on
+///   available position metadata.
+/// - panics: none.
 fn format_span(span: &Span) -> String
 {
     let mut rendered = span.file.clone();
@@ -467,12 +390,11 @@ fn format_span(span: &Span) -> String
 /// Render a command vector without invoking a shell.
 ///
 /// # Contract
-/// Preconditions: `command` contains already split argv parts and may be empty
-/// for stdin-style invocations.
-/// Postconditions: returns `<stdin>` for an empty command or a shell-readable
-/// display string with unsafe words single-quoted.
-/// Failure modes: none.
-/// Panics: none.
+/// - requires: `command` contains already split argv parts and may be empty for
+///   stdin-style invocations.
+/// - ensures: returns `<stdin>` for an empty command or a shell-readable
+///   display string with unsafe words single-quoted.
+/// - panics: none.
 fn shell_words(command: &[String]) -> String
 {
     if command.is_empty() {
@@ -496,12 +418,6 @@ fn shell_words(command: &[String]) -> String
 }
 
 /// Human-readable severity label.
-///
-/// # Contract
-/// Preconditions: `severity` is a valid model enum variant.
-/// Postconditions: returns the lowercase Markdown label for the severity.
-/// Failure modes: none.
-/// Panics: none.
 fn severity_label(severity: Severity) -> &'static str
 {
     match severity {

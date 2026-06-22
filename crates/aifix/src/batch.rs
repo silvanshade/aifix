@@ -25,12 +25,6 @@ use crate::model::Invocation;
 use crate::model::Protocol;
 
 /// Built-in Rust profile command.
-///
-/// # Contract
-/// Preconditions: constant remains non-empty and starts with the executable.
-/// Postconditions: produces rustc/clippy JSON suitable for the Rust adapter.
-/// Failure modes: using the constant has no failure path.
-/// Panics: none.
 const RUST_COMMAND: &[&str] = &[
     "cargo",
     "clippy",
@@ -44,46 +38,27 @@ const RUST_COMMAND: &[&str] = &[
 ];
 
 /// Built-in TypeScript profile command.
-///
-/// # Contract
-/// Preconditions: constant remains non-empty and starts with the executable.
-/// Postconditions: produces plain TypeScript diagnostics without pretty output.
-/// Failure modes: using the constant has no failure path.
-/// Panics: none.
 const TYPESCRIPT_COMMAND: &[&str] = &["tsc", "--noEmit", "--pretty", "false"];
 
 /// Built-in Nushell profile command.
-///
-/// # Contract
-/// Preconditions: constant remains non-empty and starts with the executable.
-/// Postconditions: invokes the configured Nushell lint front-end unchanged.
-/// Failure modes: using the constant has no failure path.
-/// Panics: none.
 const NUSHELL_COMMAND: &[&str] = &["nu-lint"];
 
 /// Maximum bytes retained from each child-process output stream.
-///
-/// # Contract
-/// Preconditions: the value is non-zero and small enough to bound invocation
-/// memory while large enough for ordinary compiler diagnostics.
-/// Postconditions: stdout and stderr are each captured up to this byte count
-/// before UTF-8 conversion or digest invocation retention.
-/// Failure modes: exceeding this limit returns a process error.
-/// Panics: none.
 pub const BATCH_STREAM_CAPTURE_LIMIT: usize = 1024 * 1024;
 
 /// Run a built-in or custom profile and return an uncapped digest.
 ///
 /// # Contract
-/// Preconditions: `profile` names a built-in profile or `custom`; custom
-/// profiles require `extra_args` to contain the executable first.
-/// Postconditions: executes the selected argv in `cwd`, retains at most
-/// [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest with
-/// uncapped group samples when output parses successfully.
-/// Failure modes: returns invalid argument, process, UTF-8, or parser errors.
-/// Panics: debug builds may panic if batch argv construction violates
-/// documented non-empty executable invariants.
+/// - requires: `profile` names a built-in profile or `custom`; custom profiles
+///   require `extra_args` to contain the executable first.
+/// - ensures: executes the selected argv in `cwd`, retains at most
+///   [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest with
+///   uncapped group samples when output parses successfully.
+/// - fails: returns invalid argument, process, UTF-8, or parser errors.
+/// - panics: debug builds may panic if batch argv construction violates
+///   documented non-empty executable invariants.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -101,15 +76,16 @@ pub fn run_profile(
 /// Run a built-in or custom profile and cap digest samples per group.
 ///
 /// # Contract
-/// Preconditions: `profile` names a built-in profile or `custom`; custom
-/// profiles require `extra_args` to contain the executable first.
-/// Postconditions: executes the selected argv in `cwd`, retains at most
-/// [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest whose
-/// per-group samples respect `max_diagnostics`.
-/// Failure modes: returns invalid argument, process, UTF-8, or parser errors.
-/// Panics: debug builds may panic if batch argv construction violates
-/// documented non-empty executable invariants.
+/// - requires: `profile` names a built-in profile or `custom`; custom profiles
+///   require `extra_args` to contain the executable first.
+/// - ensures: executes the selected argv in `cwd`, retains at most
+///   [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest
+///   whose per-group samples respect `max_diagnostics`.
+/// - fails: returns invalid argument, process, UTF-8, or parser errors.
+/// - panics: debug builds may panic if batch argv construction violates
+///   documented non-empty executable invariants.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -129,15 +105,16 @@ pub fn run_profile_with_limit(
 /// Run an explicitly configured profile and cap digest samples per group.
 ///
 /// # Contract
-/// Preconditions: `config.argv`, when non-empty, starts with an executable;
-/// otherwise `name` resolves to a built-in profile.
-/// Postconditions: executes configured argv plus `extra_args` in `cwd`, retains
-/// at most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a
-/// digest whose per-group samples respect `max_diagnostics`.
-/// Failure modes: returns invalid argument, process, UTF-8, or parser errors.
-/// Panics: debug builds may panic if resolved configured argv is unexpectedly
-/// empty before execution.
+/// - requires: `config.argv`, when non-empty, starts with an executable;
+///   otherwise `name` resolves to a built-in profile.
+/// - ensures: executes configured argv plus `extra_args` in `cwd`, retains at
+///   most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest
+///   whose per-group samples respect `max_diagnostics`.
+/// - fails: returns invalid argument, process, UTF-8, or parser errors.
+/// - panics: debug builds may panic if resolved configured argv is unexpectedly
+///   empty before execution.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -168,15 +145,16 @@ pub fn run_configured_profile(
 /// Return the command argv for a built-in profile.
 ///
 /// # Contract
-/// Preconditions: `profile` is a user-provided profile name; `custom` requires
-/// `extra_args` to contain the executable first.
-/// Postconditions: returns a non-empty argv vector for every successful profile
-/// resolution, with `extra_args` appended for built-ins.
-/// Failure modes: returns an invalid argument error for unknown profiles or an
-/// empty custom command.
-/// Panics: debug builds may panic if a successful built-in profile resolves to
-/// an empty argv vector.
+/// - requires: `profile` is a user-provided profile name; `custom` requires
+///   `extra_args` to contain the executable first.
+/// - ensures: returns a non-empty argv vector for every successful profile
+///   resolution, with `extra_args` appended for built-ins.
+/// - fails: returns an invalid argument error for unknown profiles or an empty
+///   custom command.
+/// - panics: debug builds may panic if a successful built-in profile resolves
+///   to an empty argv vector.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when `profile` is unknown or when `custom` receives no
 /// executable in `extra_args`.
@@ -215,18 +193,20 @@ pub fn profile_command(
 /// Execute one argv vector and parse bounded captured output.
 ///
 /// # Contract
-/// Preconditions: `command` must contain an executable at index zero and any
-/// following arguments already split into argv form.
-/// Postconditions: preserves stdout and stderr separately in the invocation,
-/// captures at most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream before
-/// UTF-8 conversion, parses their combined text, and returns a digest capped by
-/// `max_diagnostics`.
-/// Failure modes: returns invalid argument for an empty command, process errors
-/// for spawn, pipe, wait, join, capture-limit, or unparsable non-zero output,
-/// UTF-8 errors for non-UTF-8 streams, or parser errors for parse failures.
-/// Panics: debug builds may panic if the executable string is empty; command
-/// splitting itself uses `split_first` and returns an error for empty commands.
+/// - requires: `command` must contain an executable at index zero and any
+///   following arguments already split into argv form.
+/// - ensures: preserves stdout and stderr separately in the invocation,
+///   captures at most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream before
+///   UTF-8 conversion, parses their combined text, and returns a digest capped
+///   by `max_diagnostics`.
+/// - fails: returns invalid argument for an empty command, process errors for
+///   spawn, pipe, wait, join, capture-limit, or unparsable non-zero output,
+///   UTF-8 errors for non-UTF-8 streams, or parser errors for parse failures.
+/// - panics: debug builds may panic if the executable string is empty; command
+///   splitting itself uses `split_first` and returns an error for empty
+///   commands.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when `command` is empty, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -280,14 +260,6 @@ fn run_argv(
 }
 
 /// Captured child-process result with stdout and stderr retained separately.
-///
-/// # Contract
-/// Preconditions: stdout and stderr were read from their corresponding child
-/// pipes and each respected [`BATCH_STREAM_CAPTURE_LIMIT`].
-/// Postconditions: stores the process exit status and raw stream bytes without
-/// performing UTF-8 conversion.
-/// Failure modes: none while held as a value.
-/// Panics: none.
 struct BoundedOutput
 {
     /// Process exit status reported after the child completed.
@@ -301,15 +273,16 @@ struct BoundedOutput
 /// Spawn a command and capture stdout and stderr with explicit per-stream caps.
 ///
 /// # Contract
-/// Preconditions: `executable` is a non-empty command name and `arguments` are
-/// already split into argv entries.
-/// Postconditions: waits for the process, preserves separated stdout/stderr
-/// bytes, and never retains more than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes for
-/// either stream.
-/// Failure modes: returns process errors for spawn, unavailable pipes, read
-/// failures, wait failures, reader-thread failures, or capture-limit overflow.
-/// Panics: none; reader thread panics are converted into process errors.
+/// - requires: `executable` is a non-empty command name and `arguments` are
+///   already split into argv entries.
+/// - ensures: waits for the process, preserves separated stdout/stderr bytes,
+///   and never retains more than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes for
+///   either stream.
+/// - fails: returns process errors for spawn, unavailable pipes, read failures,
+///   wait failures, reader-thread failures, or capture-limit overflow.
+/// - panics: none; reader thread panics are converted into process errors.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when the child cannot be spawned, its pipes cannot be
 /// captured, the child cannot be waited on, a stream reader fails, a stream
@@ -382,15 +355,6 @@ fn run_child_bounded(
 }
 
 /// Best-effort child cleanup used before returning setup or wait failures.
-///
-/// # Contract
-/// Preconditions: `child` was spawned by [`run_child_bounded`] and may still be
-/// running.
-/// Postconditions: sends a kill request and waits for process reaping when the
-/// platform permits it; individual cleanup failures are intentionally ignored
-/// because an earlier error is already being returned.
-/// Failure modes: none are surfaced by this helper.
-/// Panics: none.
 fn terminate_child(child: &mut Child)
 {
     drop(child.kill());
@@ -398,14 +362,6 @@ fn terminate_child(child: &mut Child)
 }
 
 /// Take the child stdout pipe or convert the impossible absence into an error.
-///
-/// # Contract
-/// Preconditions: `child` was spawned with stdout configured as piped and
-/// `executable` names the process for diagnostics.
-/// Postconditions: returns the stdout pipe exactly once.
-/// Failure modes: returns a process error if the pipe is unavailable.
-/// Panics: none.
-///
 /// # Errors
 /// Returns an error when stdout is unexpectedly unavailable.
 fn take_stdout(
@@ -419,14 +375,6 @@ fn take_stdout(
 }
 
 /// Take the child stderr pipe or convert the impossible absence into an error.
-///
-/// # Contract
-/// Preconditions: `child` was spawned with stderr configured as piped and
-/// `executable` names the process for diagnostics.
-/// Postconditions: returns the stderr pipe exactly once.
-/// Failure modes: returns a process error if the pipe is unavailable.
-/// Panics: none.
-///
 /// # Errors
 /// Returns an error when stderr is unexpectedly unavailable.
 fn take_stderr(
@@ -440,13 +388,6 @@ fn take_stderr(
 }
 
 /// Spawn a bounded stdout reader thread.
-///
-/// # Contract
-/// Preconditions: `reader` is the stdout pipe for `executable`.
-/// Postconditions: returns a join handle that resolves to bounded stdout bytes.
-/// Failure modes: read errors, capture-limit overflow, thread-spawn errors, or
-/// thread panic are reported through the returned handle and join helper.
-/// Panics: none.
 fn spawn_stdout_reader(
     executable: &str,
     reader: ChildStdout,
@@ -456,13 +397,6 @@ fn spawn_stdout_reader(
 }
 
 /// Spawn a bounded stderr reader thread.
-///
-/// # Contract
-/// Preconditions: `reader` is the stderr pipe for `executable`.
-/// Postconditions: returns a join handle that resolves to bounded stderr bytes.
-/// Failure modes: read errors, capture-limit overflow, thread-spawn errors, or
-/// thread panic are reported through the returned handle and join helper.
-/// Panics: none.
 fn spawn_stderr_reader(
     executable: &str,
     reader: ChildStderr,
@@ -474,13 +408,13 @@ fn spawn_stderr_reader(
 /// Spawn a reader thread that captures one stream up to the configured limit.
 ///
 /// # Contract
-/// Preconditions: `stream` and `executable` are diagnostic labels, and `reader`
-/// yields bytes from one child-process pipe.
-/// Postconditions: returns a join handle whose successful value contains no
-/// more than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes.
-/// Failure modes: thread-spawn errors are returned immediately; read failures
-/// and capture-limit overflow are returned by the thread.
-/// Panics: none.
+/// - requires: `stream` and `executable` are diagnostic labels, and `reader`
+///   yields bytes from one child-process pipe.
+/// - ensures: returns a join handle whose successful value contains no more
+///   than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes.
+/// - fails: thread-spawn errors are returned immediately; read failures and
+///   capture-limit overflow are returned by the thread.
+/// - panics: none.
 fn spawn_stream_reader<R>(
     stream: &'static str,
     executable: &str,
@@ -498,13 +432,14 @@ where
 /// Read one stream into memory with an explicit byte cap.
 ///
 /// # Contract
-/// Preconditions: `reader` is an open process stream, `stream` names it, and
-/// `executable` names the producing command.
-/// Postconditions: returns captured bytes whose length is less than or equal to
-/// [`BATCH_STREAM_CAPTURE_LIMIT`].
-/// Failure modes: returns process errors for IO failures or cap overflow.
-/// Panics: none.
+/// - requires: `reader` is an open process stream, `stream` names it, and
+///   `executable` names the producing command.
+/// - ensures: returns captured bytes whose length is less than or equal to
+///   [`BATCH_STREAM_CAPTURE_LIMIT`].
+/// - fails: returns process errors for IO failures or cap overflow.
+/// - panics: none.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when reading fails or the stream exceeds the cap.
 fn read_stream_bounded<R>(
@@ -547,14 +482,14 @@ where
 /// Join a stream-reader thread and surface both returned and panic failures.
 ///
 /// # Contract
-/// Preconditions: `handle` belongs to a reader spawned by
-/// [`spawn_stream_reader`], `stream` names the captured stream, and
-/// `executable` names the child process.
-/// Postconditions: returns bounded bytes produced by the reader thread.
-/// Failure modes: propagates reader errors and maps thread panics to process
-/// errors.
-/// Panics: none.
+/// - requires: `handle` belongs to a reader spawned by [`spawn_stream_reader`],
+///   `stream` names the captured stream, and `executable` names the child
+///   process.
+/// - ensures: returns bounded bytes produced by the reader thread.
+/// - fails: propagates reader errors and maps thread panics to process errors.
+/// - panics: none.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when the reader returned one or the thread panicked.
 fn join_reader(
@@ -571,13 +506,6 @@ fn join_reader(
 }
 
 /// Convert a string slice command constant into owned argv values.
-///
-/// # Contract
-/// Preconditions: `values` contains a static argv template.
-/// Postconditions: returns an owned argv vector preserving order and length.
-/// Failure modes: none.
-/// Panics: debug builds may panic if a built-in argv template is empty or owned
-/// conversion changes the argv length.
 fn strings(values: &[&str]) -> Vec<String>
 {
     debug_assert!(
@@ -597,13 +525,6 @@ fn strings(values: &[&str]) -> Vec<String>
 }
 
 /// Combine stdout and stderr only for parsing while preserving them separately.
-///
-/// # Contract
-/// Preconditions: `invocation` contains UTF-8 stdout and stderr bodies.
-/// Postconditions: returns stdout, stderr, both separated by one newline, or an
-/// empty string without mutating the invocation.
-/// Failure modes: none.
-/// Panics: none.
 fn parse_input(invocation: &Invocation) -> String
 {
     match (invocation.stdout.is_empty(), invocation.stderr.is_empty()) {
@@ -624,25 +545,12 @@ fn parse_input(invocation: &Invocation) -> String
 }
 
 /// Render a path as UTF-8 text for invocation metadata.
-///
-/// # Contract
-/// Preconditions: `path` is a `Utf8Path`, so conversion to string cannot fail.
-/// Postconditions: returns an owned UTF-8 path string preserving the path text.
-/// Failure modes: none.
-/// Panics: none.
 fn path_to_string(path: &Utf8Path) -> String
 {
     path.to_owned().into_string()
 }
 
 /// Render an exit code for error messages.
-///
-/// # Contract
-/// Preconditions: `code` is the platform-reported process status code when one
-/// exists.
-/// Postconditions: returns the numeric code text or the stable signal fallback.
-/// Failure modes: none.
-/// Panics: none.
 fn status_label(code: Option<i32>) -> String
 {
     code.map_or_else(
@@ -652,12 +560,6 @@ fn status_label(code: Option<i32>) -> String
 }
 
 /// Unit coverage for bounded process-stream capture helpers.
-///
-/// # Contract
-/// Preconditions: test-only helpers are compiled by Rust's test harness.
-/// Postconditions: exercises local capture invariants without spawning shells.
-/// Failure modes: individual tests return [`AifixError`] values.
-/// Panics: none.
 #[cfg(test)]
 mod tests
 {
@@ -666,15 +568,6 @@ mod tests
     use super::*;
 
     /// Verify that the stream reader rejects input one byte above the cap.
-    ///
-    /// # Contract
-    /// Preconditions: [`BATCH_STREAM_CAPTURE_LIMIT`] is smaller than
-    /// `usize::MAX`.
-    /// Postconditions: confirms cap overflow returns an [`AifixError`] before
-    /// UTF-8 conversion or invocation retention.
-    /// Failure modes: allocation failure aborts the test process; unexpected
-    /// success or wrong error text is returned as a test error.
-    /// Panics: none.
     #[test]
     fn bounded_stream_rejects_one_byte_over_cap() -> Result<(), AifixError>
     {

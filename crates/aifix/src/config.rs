@@ -24,13 +24,6 @@ use crate::model::OutputFormat;
 use crate::model::Protocol;
 
 /// Complete runtime configuration after user/project merging.
-///
-/// # Contract
-/// Preconditions: decoded from trusted CLI/default layers or TOML config text.
-/// Postconditions: optional scalar fields represent explicit defaults only, and
-/// profiles are keyed by caller-visible profile names.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Config
@@ -50,13 +43,6 @@ pub struct Config
 }
 
 /// Command configuration for one batch profile.
-///
-/// # Contract
-/// Preconditions: decoded from configuration text or constructed by tests.
-/// Postconditions: an empty `argv` means "fall back to the named built-in";
-/// non-empty `argv` starts with the executable to run.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ProfileConfig
@@ -76,13 +62,6 @@ pub struct ProfileConfig
 }
 
 /// Configuration plus the paths that contributed to it.
-///
-/// # Contract
-/// Preconditions: produced by configuration discovery.
-/// Postconditions: `config` is the merged result and `paths.loaded` records the
-/// existing files read in merge order.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LoadedConfig
@@ -94,14 +73,6 @@ pub struct LoadedConfig
 }
 
 /// Candidate and loaded configuration paths.
-///
-/// # Contract
-/// Preconditions: paths are UTF-8 because the CLI and config layer use
-/// `camino` path types.
-/// Postconditions: `loaded` contains only paths actually read; candidate paths
-/// may point to files that do not exist.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ConfigPaths
@@ -115,29 +86,21 @@ pub struct ConfigPaths
 }
 
 /// Configuration merge and discovery behavior.
-///
-/// # Contract
-/// Preconditions: implemented for decoded `Config` values.
-/// Postconditions: methods preserve field-by-field merge semantics.
-/// Failure modes: `discover` can return configuration discovery, I/O, or TOML
-/// errors; `merge` has no failure path.
-/// Panics: contained methods either do not panic or document their debug-only
-/// assertions precisely.
 impl Config
 {
     /// Discover and merge user and project configuration for `start`.
     ///
     /// # Contract
-    /// Preconditions: `start` names a UTF-8 path that may be either a file or a
-    /// directory.
-    /// Postconditions: returns a config where readable user settings are merged
-    /// first and nearest project settings override them field-by-field; absent
-    /// user config is skipped, while discovered non-file config paths are
-    /// rejected with a configuration error.
-    /// Failure modes: returns an `AifixError` when the search directory cannot
-    /// be derived, a discovered config path is not a file, a config file cannot
-    /// be read, or TOML deserialization fails.
-    /// Panics: none.
+    /// - requires: `start` names a UTF-8 path that may be either a file or a
+    ///   directory.
+    /// - ensures: returns a config where readable user settings are merged
+    ///   first and nearest project settings override them field-by-field;
+    ///   absent user config is skipped, while discovered non-file config paths
+    ///   are rejected with a configuration error.
+    /// - fails: returns an `AifixError` when the search directory cannot be
+    ///   derived, a discovered config path is not a file, a config file cannot
+    ///   be read, or TOML deserialization fails.
+    /// - panics: none.
     ///
     /// # Errors
     /// Returns an error when the config search directory cannot be derived, a
@@ -172,12 +135,13 @@ impl Config
     /// values.
     ///
     /// # Contract
-    /// Preconditions: profile names in `other` are already decoded as valid
-    /// UTF-8 map keys.
-    /// Postconditions: every non-empty setting in `other` replaces this
-    /// config's matching setting; existing profile fields are merged rather
-    /// than dropped. Failure modes: none.
-    /// Panics: none.
+    /// - requires: profile names in `other` are already decoded as valid UTF-8
+    ///   map keys.
+    /// - ensures: every non-empty setting in `other` replaces this config's
+    ///   matching setting; existing profile fields are merged rather than
+    ///   dropped.
+    /// - fails: none.
+    /// - panics: none.
     fn merge(
         &mut self,
         other: Self,
@@ -203,25 +167,19 @@ impl Config
 }
 
 /// Profile-specific merge behavior.
-///
-/// # Contract
-/// Preconditions: implemented for decoded `ProfileConfig` values.
-/// Postconditions: methods preserve explicit-field override semantics.
-/// Failure modes: contained methods have no error return path.
-/// Panics: contained methods document their debug-only assertions precisely.
 impl ProfileConfig
 {
     /// Merge `other` into this profile, replacing only explicitly specified
     /// values.
     ///
     /// # Contract
-    /// Preconditions: `other.argv`, when non-empty, starts with the executable
-    /// the caller wants to run.
-    /// Postconditions: explicit profile fields in `other` replace this
-    /// profile's corresponding fields; omitted fields keep their current
-    /// values. Failure modes: none.
-    /// Panics: debug builds may panic if a non-empty incoming argv becomes
-    /// empty after assignment.
+    /// - requires: `other.argv`, when non-empty, starts with the executable the
+    ///   caller wants to run.
+    /// - ensures: explicit profile fields in `other` replace this profile's
+    ///   corresponding fields; omitted fields keep their current values.
+    /// - fails: none.
+    /// - panics: debug builds may panic if a non-empty incoming argv becomes
+    ///   empty after assignment.
     fn merge(
         &mut self,
         other: Self,
@@ -249,14 +207,14 @@ impl ProfileConfig
 /// Return candidate config paths for CLI reporting without loading files.
 ///
 /// # Contract
-/// Preconditions: `start` names a UTF-8 path that may be either a file or a
-/// directory.
-/// Postconditions: returns the platform user config candidate, the nearest
-/// regular-file project config if one exists, and an empty loaded list.
-/// Failure modes: returns an `AifixError` when `start` has no usable directory
-/// ancestor, candidate metadata cannot be read, or a discovered `aifix.toml`
-/// exists but is not a regular file.
-/// Panics: none.
+/// - requires: `start` names a UTF-8 path that may be either a file or a
+///   directory.
+/// - ensures: returns the platform user config candidate, the nearest
+///   regular-file project config if one exists, and an empty loaded list.
+/// - fails: returns an `AifixError` when `start` has no usable directory
+///   ancestor, candidate metadata cannot be read, or a discovered `aifix.toml`
+///   exists but is not a regular file.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an error when `start` has no usable directory ancestor for project
@@ -279,13 +237,13 @@ pub fn config_paths(start: &Utf8Path) -> Result<ConfigPaths, AifixError>
 /// Read and deserialize an optional TOML config file.
 ///
 /// # Contract
-/// Preconditions: `path` names the intended UTF-8 TOML configuration file.
-/// Postconditions: returns `None` only when `path` is absent; returns decoded
-/// config for regular files. Existing non-files are rejected instead of being
-/// treated as absent so user mistakes are visible.
-/// Failure modes: returns an I/O error for unreadable files, a configuration
-/// error for existing non-files, or a TOML error for invalid config text.
-/// Panics: none.
+/// - requires: `path` names the intended UTF-8 TOML configuration file.
+/// - ensures: returns `None` only when `path` is absent; returns decoded config
+///   for regular files. Existing non-files are rejected instead of being
+///   treated as absent so user mistakes are visible.
+/// - fails: returns an I/O error for unreadable files, a configuration error
+///   for existing non-files, or a TOML error for invalid config text.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an I/O error when `path` cannot be read, a configuration error when
@@ -304,13 +262,12 @@ fn read_optional_config(path: &Utf8Path) -> Result<Option<Config>, AifixError>
 /// Read and deserialize one TOML config file.
 ///
 /// # Contract
-/// Preconditions: `path` names an existing UTF-8 TOML configuration file.
-/// Postconditions: returns the decoded configuration without applying defaults
-/// beyond Serde field defaults.
-/// Failure modes: returns an I/O error for unreadable files, a configuration
-/// error for existing non-files, or a TOML error for invalid configuration
-/// text.
-/// Panics: none.
+/// - requires: `path` names an existing UTF-8 TOML configuration file.
+/// - ensures: returns the decoded configuration without applying defaults
+///   beyond Serde field defaults.
+/// - fails: returns an I/O error for unreadable files, a configuration error
+///   for existing non-files, or a TOML error for invalid configuration text.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an I/O error when `path` cannot be read, a configuration error when
@@ -329,13 +286,13 @@ fn read_config(path: &Utf8Path) -> Result<Config, AifixError>
 /// Read optional config text without an `exists`-then-read check.
 ///
 /// # Contract
-/// Preconditions: `path` names the intended UTF-8 TOML configuration file.
-/// Postconditions: returns `None` only when metadata or read reports
-/// `NotFound`; returns file text for readable regular files; rejects existing
-/// non-files with a stable configuration error.
-/// Failure modes: returns configuration errors for non-files and I/O errors for
-/// unreadable files other than absence.
-/// Panics: none.
+/// - requires: `path` names the intended UTF-8 TOML configuration file.
+/// - ensures: returns `None` only when metadata or read reports `NotFound`;
+///   returns file text for readable regular files; rejects existing non-files
+///   with a stable configuration error.
+/// - fails: returns configuration errors for non-files and I/O errors for
+///   unreadable files other than absence.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns a configuration error when `path` exists but is not a regular file,
@@ -364,11 +321,12 @@ fn read_config_text(path: &Utf8Path) -> Result<Option<String>, AifixError>
 /// Build the stable error used when a config candidate is not a regular file.
 ///
 /// # Contract
-/// Preconditions: caller observed that `path` exists but is not a regular file.
-/// Postconditions: returns an [`AifixError::Config`] whose message identifies
-/// the path and chosen behavior: reject rather than skip. Failure modes:
-/// allocation may abort through the global allocator; no recoverable error is
-/// returned. Panics: none.
+/// - requires: caller observed that `path` exists but is not a regular file.
+/// - ensures: returns an [`AifixError::Config`] whose message identifies the
+///   path and chosen behavior: reject rather than skip.
+/// - fails: allocation may abort through the global allocator; no recoverable
+///   error is returned.
+/// - panics: none.
 fn non_file_config_error(path: &Utf8Path) -> AifixError
 {
     AifixError::config(format!(
@@ -379,14 +337,14 @@ fn non_file_config_error(path: &Utf8Path) -> AifixError
 /// Locate the nearest `aifix.toml` walking upward from `start`.
 ///
 /// # Contract
-/// Preconditions: `start` names a UTF-8 file or directory path.
-/// Postconditions: returns the first regular-file `aifix.toml` found from the
-/// normalized start directory toward the filesystem root, or `None` when every
-/// candidate is absent.
-/// Failure modes: returns an `AifixError` when no search directory can be
-/// derived, candidate metadata cannot be read, or an `aifix.toml` candidate
-/// exists but is not a regular file.
-/// Panics: none.
+/// - requires: `start` names a UTF-8 file or directory path.
+/// - ensures: returns the first regular-file `aifix.toml` found from the
+///   normalized start directory toward the filesystem root, or `None` when
+///   every candidate is absent.
+/// - fails: returns an `AifixError` when no search directory can be derived,
+///   candidate metadata cannot be read, or an `aifix.toml` candidate exists but
+///   is not a regular file.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an error when `start` cannot be normalized into a search directory,
@@ -414,15 +372,15 @@ fn nearest_project_config(start: &Utf8Path) -> Result<Option<Utf8PathBuf>, Aifix
 /// Resolve `start` to a directory for upward project config search.
 ///
 /// # Contract
-/// Preconditions: `start` names a UTF-8 path provided by the caller.
-/// Postconditions: returns `start` unchanged when filesystem metadata says it
-/// is a directory; otherwise returns its UTF-8 parent directory. Missing paths
-/// are treated as file-like starts so callers can search from a planned file's
-/// parent.
-/// Failure modes: returns a configuration error when a non-directory path has
-/// no parent directory, or an I/O error when existing path metadata cannot be
-/// read.
-/// Panics: none.
+/// - requires: `start` names a UTF-8 path provided by the caller.
+/// - ensures: returns `start` unchanged when filesystem metadata says it is a
+///   directory; otherwise returns its UTF-8 parent directory. Missing paths are
+///   treated as file-like starts so callers can search from a planned file's
+///   parent.
+/// - fails: returns a configuration error when a non-directory path has no
+///   parent directory, or an I/O error when existing path metadata cannot be
+///   read.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an error when a non-directory `start` has no parent directory to use

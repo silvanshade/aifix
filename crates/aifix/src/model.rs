@@ -21,15 +21,6 @@ use crate::error::AifixError;
 use crate::explain::Explain;
 
 /// Input protocol understood by the diagnostic adapter.
-///
-/// # Contract
-/// - Preconditions: values are selected by callers or parsed from stable CLI
-///   spellings.
-/// - Postconditions: each variant maps to one adapter strategy and serde
-///   kebab-case spelling.
-/// - Failure modes: none while held as a value; parsing failures are reported
-///   by [`FromStr`].
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -52,13 +43,6 @@ pub enum Protocol
 impl Protocol
 {
     /// Return the stable CLI spelling for this protocol.
-    ///
-    /// # Contract
-    /// - Preconditions: `self` is any supported protocol variant.
-    /// - Postconditions: returns a non-empty static kebab-case spelling
-    ///   accepted by [`FromStr`].
-    /// - Failure modes: none.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub const fn as_str(self) -> &'static str
@@ -78,11 +62,8 @@ impl fmt::Display for Protocol
 {
     /// Format using the stable CLI spelling.
     ///
-    /// # Contract
-    /// - Preconditions: `f` is writable by the formatting runtime.
-    /// - Postconditions: writes exactly [`Protocol::as_str`] for `self`.
-    /// - Failure modes: returns the formatter error if writing fails.
-    /// - Panics: none.
+    /// # Errors
+    /// Returns formatter errors when writing the protocol spelling fails.
     #[inline]
     fn fmt(
         &self,
@@ -100,13 +81,14 @@ impl FromStr for Protocol
     /// Parse a stable protocol spelling.
     ///
     /// # Contract
-    /// - Preconditions: `s` may contain surrounding whitespace and supported
+    /// - requires: `s` may contain surrounding whitespace and supported
     ///   aliases.
-    /// - Postconditions: returns the corresponding protocol for known
-    ///   spellings.
-    /// - Failure modes: returns [`AifixError::InvalidArgument`] for unknown
-    ///   spellings.
-    /// - Panics: none.
+    /// - ensures: returns the corresponding protocol for known spellings.
+    /// - fails: returns [`AifixError::InvalidArgument`] for unknown spellings.
+    /// - panics: none.
+    ///
+    /// # Errors
+    /// Returns [`AifixError::InvalidArgument`] for unknown protocol spellings.
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err>
     {
@@ -127,15 +109,6 @@ impl FromStr for Protocol
 }
 
 /// Digest output representation.
-///
-/// # Contract
-/// - Preconditions: values are selected by callers or parsed from stable CLI
-///   spellings.
-/// - Postconditions: each variant maps to one renderer format and serde
-///   kebab-case spelling.
-/// - Failure modes: none while held as a value; parsing failures are reported
-///   by [`FromStr`].
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -152,13 +125,6 @@ pub enum OutputFormat
 impl OutputFormat
 {
     /// Return the stable CLI spelling for this output format.
-    ///
-    /// # Contract
-    /// - Preconditions: `self` is any supported output-format variant.
-    /// - Postconditions: returns a non-empty static kebab-case spelling
-    ///   accepted by [`FromStr`].
-    /// - Failure modes: none.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub const fn as_str(self) -> &'static str
@@ -175,11 +141,8 @@ impl fmt::Display for OutputFormat
 {
     /// Format using the stable CLI spelling.
     ///
-    /// # Contract
-    /// - Preconditions: `f` is writable by the formatting runtime.
-    /// - Postconditions: writes exactly [`OutputFormat::as_str`] for `self`.
-    /// - Failure modes: returns the formatter error if writing fails.
-    /// - Panics: none.
+    /// # Errors
+    /// Returns formatter errors when writing the output-format spelling fails.
     #[inline]
     fn fmt(
         &self,
@@ -197,13 +160,15 @@ impl FromStr for OutputFormat
     /// Parse a stable output-format spelling.
     ///
     /// # Contract
-    /// - Preconditions: `s` may contain surrounding whitespace and supported
+    /// - requires: `s` may contain surrounding whitespace and supported
     ///   aliases.
-    /// - Postconditions: returns the corresponding output format for known
-    ///   spellings.
-    /// - Failure modes: returns [`AifixError::InvalidArgument`] for unknown
-    ///   spellings.
-    /// - Panics: none.
+    /// - ensures: returns the corresponding output format for known spellings.
+    /// - fails: returns [`AifixError::InvalidArgument`] for unknown spellings.
+    /// - panics: none.
+    ///
+    /// # Errors
+    /// Returns [`AifixError::InvalidArgument`] for unknown output-format
+    /// spellings.
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err>
     {
@@ -219,15 +184,6 @@ impl FromStr for OutputFormat
 }
 
 /// Normalized diagnostic severity ordered from least to most urgent.
-///
-/// # Contract
-/// - Preconditions: source tools may use richer or protocol-specific
-///   severities.
-/// - Postconditions: values collapse severities into the four levels used by
-///   grouping and rendering.
-/// - Failure modes: none while held as a value; parsing failures are reported
-///   by [`FromStr`].
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -246,13 +202,6 @@ pub enum Severity
 impl Severity
 {
     /// Return the stable lowercase spelling for this severity.
-    ///
-    /// # Contract
-    /// - Preconditions: `self` is any supported severity variant.
-    /// - Postconditions: returns a non-empty static lowercase spelling accepted
-    ///   by [`FromStr`].
-    /// - Failure modes: none.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub const fn as_str(self) -> &'static str
@@ -266,13 +215,6 @@ impl Severity
     }
 
     /// Convert a source-tool severity string into a normalized severity.
-    ///
-    /// # Contract
-    /// - Preconditions: `value` is a severity label from an external tool.
-    /// - Postconditions: returns error, warning, hint, or info with unknown
-    ///   labels treated as info.
-    /// - Failure modes: none.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn from_tool_str(value: &str) -> Self
@@ -290,11 +232,8 @@ impl fmt::Display for Severity
 {
     /// Format using the stable lowercase spelling.
     ///
-    /// # Contract
-    /// - Preconditions: `f` is writable by the formatting runtime.
-    /// - Postconditions: writes exactly [`Severity::as_str`] for `self`.
-    /// - Failure modes: returns the formatter error if writing fails.
-    /// - Panics: none.
+    /// # Errors
+    /// Returns formatter errors when writing the severity spelling fails.
     #[inline]
     fn fmt(
         &self,
@@ -312,13 +251,15 @@ impl FromStr for Severity
     /// Parse a normalized severity spelling.
     ///
     /// # Contract
-    /// - Preconditions: `s` may contain surrounding whitespace and supported
+    /// - requires: `s` may contain surrounding whitespace and supported
     ///   aliases.
-    /// - Postconditions: returns the corresponding normalized severity for
-    ///   known spellings.
-    /// - Failure modes: returns [`AifixError::InvalidArgument`] for unknown
+    /// - ensures: returns the corresponding normalized severity for known
     ///   spellings.
-    /// - Panics: none.
+    /// - fails: returns [`AifixError::InvalidArgument`] for unknown spellings.
+    /// - panics: none.
+    ///
+    /// # Errors
+    /// Returns [`AifixError::InvalidArgument`] for unknown severity spellings.
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err>
     {
@@ -335,14 +276,6 @@ impl FromStr for Severity
 }
 
 /// Source-code span associated with a diagnostic.
-///
-/// # Contract
-/// - Preconditions: coordinates, when present, are one-based and describe a
-///   single source location.
-/// - Postconditions: serde omits absent coordinates while preserving file or
-///   URI text.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Span
@@ -366,15 +299,6 @@ pub struct Span
 impl Span
 {
     /// Construct a span with optional one-based coordinates.
-    ///
-    /// # Contract
-    /// - Preconditions: coordinates are one-based when present; start is not
-    ///   after end for well-formed source spans.
-    /// - Postconditions: stores the provided file text and coordinates
-    ///   unchanged.
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn new<File>(
@@ -408,13 +332,6 @@ impl Span
 }
 
 /// Suggested source edit or human action attached to a diagnostic.
-///
-/// # Contract
-/// - Preconditions: `message` is human-readable and non-empty for normalized
-///   suggestions.
-/// - Postconditions: serde omits absent machine replacement and span fields.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Suggestion
@@ -432,15 +349,6 @@ pub struct Suggestion
 impl Suggestion
 {
     /// Construct a diagnostic suggestion.
-    ///
-    /// # Contract
-    /// - Preconditions: `message` is non-empty after conversion for normalized
-    ///   suggestions.
-    /// - Postconditions: stores message, optional replacement, and optional
-    ///   span unchanged.
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn new<Message>(
@@ -469,14 +377,6 @@ impl Suggestion
 /// Preserved raw JSON keeps source-specific evidence available to renderers
 /// that choose to expose it, but digest duplicate detection intentionally uses
 /// only the normalized semantic fields.
-///
-/// # Contract
-/// - Preconditions: `source` and `message` are non-empty after adapter
-///   normalization.
-/// - Postconditions: serde omits absent optional fields and empty detail
-///   vectors; raw payloads do not define semantic diagnostic identity.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic
@@ -505,14 +405,6 @@ pub struct Diagnostic
 impl Diagnostic
 {
     /// Construct a diagnostic without spans, suggestions, or raw payload.
-    ///
-    /// # Contract
-    /// - Preconditions: `source` and `message` are non-empty after conversion.
-    /// - Postconditions: creates a diagnostic with empty spans, empty
-    ///   suggestions, and no raw payload.
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn new<Source, Message>(
@@ -547,14 +439,6 @@ impl Diagnostic
 
     /// Attach spans, suggestions, and raw JSON in one allocation-conscious
     /// step.
-    ///
-    /// # Contract
-    /// - Preconditions: detail vectors already describe this diagnostic and
-    ///   contain normalized items.
-    /// - Postconditions: replaces the existing detail fields without changing
-    ///   source, severity, code, or message.
-    /// - Failure modes: none; ownership is moved into `self`.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn with_details(
@@ -572,13 +456,6 @@ impl Diagnostic
 }
 
 /// Metadata for the tool invocation that produced diagnostics.
-///
-/// # Contract
-/// - Preconditions: command entries and captured streams are already UTF-8.
-/// - Postconditions: serde omits absent cwd, empty streams, and absent exit
-///   code.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Invocation
@@ -603,17 +480,6 @@ impl Invocation
 {
     /// Construct invocation metadata from command output without exposing
     /// struct literals.
-    ///
-    /// # Contract
-    /// - Preconditions: `command` describes the executed program or synthetic
-    ///   source and is non-empty when process-like metadata is available; each
-    ///   command entry is non-empty; streams are UTF-8.
-    /// - Postconditions: converts and stores every field without changing the
-    ///   serde shape of [`Invocation`].
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: debug builds may panic if `command` is empty or contains an
-    ///   empty entry.
     #[must_use]
     #[inline]
     pub fn new<Command, Cwd, Stdout, Stderr>(
@@ -648,15 +514,6 @@ impl Invocation
     }
 
     /// Construct synthetic invocation metadata for pipeline mode.
-    ///
-    /// # Contract
-    /// - Preconditions: `protocol` is the parser used for `input`; `input` is
-    ///   the original pipeline payload label.
-    /// - Postconditions: builds `["aifix", "pipeline", protocol, input]` with
-    ///   empty streams and no cwd or exit code.
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn pipeline<Input>(
@@ -687,16 +544,6 @@ impl Invocation
     }
 
     /// Construct invocation metadata from a UTF-8 working directory path.
-    ///
-    /// # Contract
-    /// - Preconditions: `cwd` is the working directory used for the command and
-    ///   is valid UTF-8; `command` is non-empty and contains no empty entries.
-    /// - Postconditions: stores `cwd.as_str()` as the invocation cwd and
-    ///   preserves other fields.
-    /// - Failure modes: allocation may abort through the global allocator; no
-    ///   recoverable error is returned.
-    /// - Panics: debug builds may panic if `command` is empty or contains an
-    ///   empty entry.
     #[must_use]
     #[inline]
     pub fn with_cwd_path(
@@ -718,14 +565,6 @@ impl Invocation
 }
 
 /// Aggregate diagnostic counts.
-///
-/// # Contract
-/// - Preconditions: count maps are computed from the same deduplicated
-///   diagnostics as `total`.
-/// - Postconditions: serde preserves deterministic map ordering through
-///   [`BTreeMap`].
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counts
@@ -739,14 +578,6 @@ pub struct Counts
 }
 
 /// Group of related diagnostics sharing a code or message fallback.
-///
-/// # Contract
-/// - Preconditions: `source` is non-empty and `count` is the full group size
-///   before sample truncation.
-/// - Postconditions: samples may be bounded independently from `count`;
-///   explanation metadata describes the group.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group
@@ -770,14 +601,6 @@ pub struct Group
 }
 
 /// Complete normalized digest emitted by pipeline and batch modes.
-///
-/// # Contract
-/// - Preconditions: counts, groups, and diagnostics were computed from the same
-///   normalized invocation output.
-/// - Postconditions: carries both aggregate/grouped views and the full
-///   deduplicated diagnostic list.
-/// - Failure modes: none while held as a value.
-/// - Panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Digest
@@ -795,14 +618,6 @@ pub struct Digest
 impl Digest
 {
     /// Truncate retained diagnostic samples without changing aggregate counts.
-    ///
-    /// # Contract
-    /// - Preconditions: `max_diagnostics` is the requested retained sample cap;
-    ///   `None` means no truncation.
-    /// - Postconditions: top-level diagnostics and every group sample list have
-    ///   length at most the cap when present.
-    /// - Failure modes: none; vector truncation is infallible.
-    /// - Panics: none.
     #[inline]
     pub fn truncate_samples(
         &mut self,

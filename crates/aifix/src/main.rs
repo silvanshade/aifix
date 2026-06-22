@@ -38,31 +38,19 @@ use clap_complete::Shell;
 use clap_complete::generate;
 
 /// Exit status used when the requested operation completed successfully.
-///
-/// # Contract
-/// Preconditions: command execution returned `Ok(())`.
-/// Postconditions: maps successful CLI completion to the platform success code.
-/// Failure modes: none.
-/// Panics: none.
 const EXIT_SUCCESS: ExitCode = ExitCode::SUCCESS;
 
 /// Exit status used when aifix itself failed to read, parse, run, or render.
-///
-/// # Contract
-/// Preconditions: command execution returned a `CliError`.
-/// Postconditions: maps CLI failure to the platform failure code.
-/// Failure modes: none.
-/// Panics: none.
 const EXIT_FAILURE: ExitCode = ExitCode::FAILURE;
 
 /// Parse arguments, run the requested command, and translate failures to
 /// process exits.
 ///
 /// # Contract
-/// Preconditions: standard CLI argument decoding must be available to clap.
-/// Postconditions: returns success only after the selected command completed.
-/// Failure modes: writes a human-readable error to stderr and returns failure.
-/// Panics: none.
+/// - requires: standard CLI argument decoding must be available to clap.
+/// - ensures: returns success only after the selected command completed.
+/// - fails: writes a human-readable error to stderr and returns failure.
+/// - panics: none.
 fn main() -> ExitCode
 {
     match run() {
@@ -81,11 +69,12 @@ fn main() -> ExitCode
 /// Execute the selected subcommand.
 ///
 /// # Contract
-/// Preconditions: arguments must satisfy clap's generated parser invariants.
-/// Postconditions: dispatches exactly one subcommand implementation.
-/// Failure modes: propagates fallible subcommand errors; completion generation
-/// reports no recoverable errors through clap-complete. The MCP server owns
-/// its stdio loop until stdin closes. Panics: none.
+/// - requires: arguments must satisfy clap's generated parser invariants.
+/// - ensures: dispatches exactly one subcommand implementation.
+/// - fails: propagates fallible subcommand errors; completion generation
+///   reports no recoverable errors through clap-complete. The MCP server owns
+///   its stdio loop until stdin closes.
+/// - panics: none.
 fn run() -> Result<(), CliError>
 {
     let cli = Cli::parse();
@@ -104,12 +93,6 @@ fn run() -> Result<(), CliError>
 }
 
 /// Agent-first diagnostic adapter command line.
-///
-/// # Contract
-/// Preconditions: clap owns construction of this value from process arguments.
-/// Postconditions: contains one validated top-level subcommand.
-/// Failure modes: clap reports invalid argument shapes before this value
-/// exists. Panics: none.
 #[derive(Debug, Parser)]
 #[command(name = "aifix")]
 #[command(
@@ -124,12 +107,6 @@ struct Cli
 }
 
 /// Supported top-level commands.
-///
-/// # Contract
-/// Preconditions: variants must stay aligned with the documented CLI surface.
-/// Postconditions: each variant maps to one dispatch arm in `run`.
-/// Failure modes: invalid spellings are rejected by clap before dispatch.
-/// Panics: none.
 #[derive(Debug, Subcommand)]
 enum Command
 {
@@ -149,12 +126,6 @@ enum Command
 }
 
 /// Arguments for pipeline mode.
-///
-/// # Contract
-/// Preconditions: `input` is either `-` or an OS path accepted by the platform.
-/// Postconditions: optional protocol, format, and limit override discovered
-/// configuration. Failure modes: invalid enum spellings are rejected by clap.
-/// Panics: none.
 #[derive(Debug, Args)]
 struct PipelineCommand
 {
@@ -176,13 +147,6 @@ struct PipelineCommand
 }
 
 /// Arguments for batch mode.
-///
-/// # Contract
-/// Preconditions: `profile` names either a configured profile or the built-in
-/// custom path. Postconditions: optional protocol, format, working directory,
-/// and limit override configuration. Failure modes: missing profile
-/// configuration or failing child commands are reported as errors.
-/// Panics: none.
 #[derive(Debug, Args)]
 struct BatchCommand
 {
@@ -212,12 +176,6 @@ struct BatchCommand
 }
 
 /// Arguments for deterministic diagnostic-code explanations.
-///
-/// # Contract
-/// Preconditions: `source` is a diagnostic producer name such as `rustc` or
-/// `clippy`. Postconditions: each requested code produces one explanation
-/// block. Failure modes: stdout write errors are propagated.
-/// Panics: none.
 #[derive(Debug, Args)]
 struct ExplainCommand
 {
@@ -229,13 +187,6 @@ struct ExplainCommand
 }
 
 /// Arguments for shell completion generation.
-///
-/// # Contract
-/// Preconditions: `shell` must be one of clap-complete's supported shells.
-/// Postconditions: writes a completion script to standard output with the
-/// explicit `aifix` binary name. Failure modes: none are surfaced by
-/// clap-complete's generation API.
-/// Panics: none.
 #[derive(Debug, Args)]
 struct CompletionsCommand
 {
@@ -245,12 +196,6 @@ struct CompletionsCommand
 }
 
 /// Arguments for configuration inspection.
-///
-/// # Contract
-/// Preconditions: variants must stay aligned with configuration inspection
-/// dispatch. Postconditions: each variant maps to one inspection action.
-/// Failure modes: discovery or stdout write errors are propagated.
-/// Panics: none.
 #[derive(Debug, Subcommand)]
 enum ConfigCommand
 {
@@ -259,12 +204,6 @@ enum ConfigCommand
 }
 
 /// CLI spellings for supported input protocols.
-///
-/// # Contract
-/// Preconditions: variants must mirror the library protocol enum.
-/// Postconditions: conversion into `Protocol` is total and allocation-free.
-/// Failure modes: invalid spellings are rejected by clap.
-/// Panics: none.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 enum CliProtocol
@@ -284,12 +223,6 @@ enum CliProtocol
 }
 
 /// CLI spellings for digest render formats.
-///
-/// # Contract
-/// Preconditions: variants must mirror the library output format enum.
-/// Postconditions: conversion into `OutputFormat` is total and allocation-free.
-/// Failure modes: invalid spellings are rejected by clap.
-/// Panics: none.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 enum CliOutputFormat
@@ -303,12 +236,6 @@ enum CliOutputFormat
 }
 
 /// Input path wrapper that preserves `-` as standard input.
-///
-/// # Contract
-/// Preconditions: raw values come from clap's path argument parser.
-/// Postconditions: stores the value exactly as provided for later source
-/// selection. Failure modes: parsing is infallible.
-/// Panics: none.
 #[derive(Clone, Debug)]
 struct InputPath
 {
@@ -317,13 +244,6 @@ struct InputPath
 }
 
 /// Binary-local error wrapper for IO plus library failures.
-///
-/// # Contract
-/// Preconditions: errors originate from CLI IO or library operations.
-/// Postconditions: preserves source errors for display and exit translation.
-/// Failure modes: non-UTF-8 current directories and batch extra arguments are
-/// represented explicitly.
-/// Panics: none.
 #[derive(Debug, thiserror::Error)]
 enum CliError
 {
@@ -353,12 +273,6 @@ impl FromStr for InputPath
     type Err = Infallible;
 
     /// Store the path exactly as clap received it.
-    ///
-    /// # Contract
-    /// Preconditions: `raw` is the command-line token supplied for `--input`.
-    /// Postconditions: returns an `InputPath` preserving the token
-    /// byte-for-byte as UTF-8. Failure modes: none; the parser is
-    /// infallible. Panics: none.
     fn from_str(raw: &str) -> Result<Self, Self::Err>
     {
         Ok(Self {
@@ -370,12 +284,6 @@ impl FromStr for InputPath
 impl From<CliProtocol> for Protocol
 {
     /// Convert clap's value enum into the library protocol enum.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a valid CLI protocol variant.
-    /// Postconditions: returns the semantically identical library protocol
-    /// variant. Failure modes: none.
-    /// Panics: none.
     #[inline]
     fn from(value: CliProtocol) -> Self
     {
@@ -393,12 +301,6 @@ impl From<CliProtocol> for Protocol
 impl From<CliOutputFormat> for OutputFormat
 {
     /// Convert clap's value enum into the library output-format enum.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a valid CLI output-format variant.
-    /// Postconditions: returns the semantically identical library output-format
-    /// variant. Failure modes: none.
-    /// Panics: none.
     #[inline]
     fn from(value: CliOutputFormat) -> Self
     {
@@ -413,11 +315,13 @@ impl From<CliOutputFormat> for OutputFormat
 /// Read diagnostics, build a digest, and write the selected representation.
 ///
 /// # Contract
-/// Preconditions: `command` came from clap and may override discovered
-/// configuration. Postconditions: writes exactly one rendered digest to stdout
-/// on success. Failure modes: current directory, configuration, input, parser,
-/// digest, or stdout errors propagate. Panics: debug assertion failure only if
-/// clap provides an empty non-stdin input path.
+/// - requires: `command` came from clap and may override discovered
+///   configuration.
+/// - ensures: writes exactly one rendered digest to stdout on success.
+/// - fails: current directory, configuration, input, parser, digest, or stdout
+///   errors propagate.
+/// - panics: debug assertion failure only if clap provides an empty non-stdin
+///   input path.
 fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
 {
     debug_assert!(
@@ -450,11 +354,13 @@ fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
 /// Execute a configured profile, then write the digest returned by the library.
 ///
 /// # Contract
-/// Preconditions: `command.profile` names either a configured profile or a
-/// custom invocation. Postconditions: writes exactly one rendered digest for
-/// the executed command. Failure modes: current directory, configuration, child
-/// execution, parser, digest, or stdout errors propagate. Panics: debug
-/// assertion failure only if clap provides an empty profile name.
+/// - requires: `command.profile` names either a configured profile or a custom
+///   invocation.
+/// - ensures: writes exactly one rendered digest for the executed command.
+/// - fails: current directory, configuration, child execution, parser, digest,
+///   or stdout errors propagate.
+/// - panics: debug assertion failure only if clap provides an empty profile
+///   name.
 fn run_batch(command: BatchCommand) -> Result<(), CliError>
 {
     debug_assert!(
@@ -520,11 +426,12 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
 /// Render one or more deterministic explanations.
 ///
 /// # Contract
-/// Preconditions: `command.source` is non-empty after clap parsing.
-/// Postconditions: writes one explanation block for the source alone or for
-/// each requested code. Failure modes: stdout write errors propagate.
-/// Panics: debug assertion failure only if clap provides an empty explanation
-/// source.
+/// - requires: `command.source` is non-empty after clap parsing.
+/// - ensures: writes one explanation block for the source alone or for each
+///   requested code.
+/// - fails: stdout write errors propagate.
+/// - panics: debug assertion failure only if clap provides an empty explanation
+///   source.
 fn run_explain(command: ExplainCommand) -> Result<(), CliError>
 {
     debug_assert!(
@@ -550,10 +457,10 @@ fn run_explain(command: ExplainCommand) -> Result<(), CliError>
 /// Run configuration inspection commands.
 ///
 /// # Contract
-/// Preconditions: `command` came from clap and identifies one inspection
-/// action. Postconditions: writes the requested configuration detail to stdout.
-/// Failure modes: configuration discovery or stdout write errors propagate.
-/// Panics: none.
+/// - requires: `command` came from clap and identifies one inspection action.
+/// - ensures: writes the requested configuration detail to stdout.
+/// - fails: configuration discovery or stdout write errors propagate.
+/// - panics: none.
 fn run_config(command: &ConfigCommand) -> Result<(), CliError>
 {
     match command {
@@ -562,13 +469,6 @@ fn run_config(command: &ConfigCommand) -> Result<(), CliError>
 }
 
 /// Generate a completion script for the requested shell.
-///
-/// # Contract
-/// Preconditions: clap can construct command metadata for this binary.
-/// Postconditions: writes the selected shell completion script to stdout using
-/// the explicit `aifix` binary name.
-/// Failure modes: none are surfaced by clap-complete's generation API.
-/// Panics: none.
 fn run_completions(command: &CompletionsCommand)
 {
     let mut clap_command = Cli::command();
@@ -580,10 +480,11 @@ fn run_completions(command: &CompletionsCommand)
 /// Print the configuration files aifix considered for the current directory.
 ///
 /// # Contract
-/// Preconditions: the current directory must be valid UTF-8.
-/// Postconditions: writes user and project configuration paths or `-` markers.
-/// Failure modes: current directory, path discovery, or stdout write errors
-/// propagate. Panics: none.
+/// - requires: the current directory must be valid UTF-8.
+/// - ensures: writes user and project configuration paths or `-` markers.
+/// - fails: current directory, path discovery, or stdout write errors
+///   propagate.
+/// - panics: none.
 fn write_config_paths() -> Result<(), CliError>
 {
     let cwd = current_utf8_dir()?;
@@ -607,11 +508,11 @@ fn write_config_paths() -> Result<(), CliError>
 /// Write one explanation block to standard output.
 ///
 /// # Contract
-/// Preconditions: `stdout` is writable and `explanation` was built by the
-/// library. Postconditions: writes reference, status, summary, and a trailing
-/// blank line. Failure modes: stdout write errors propagate.
-/// Panics: debug assertion failure only if library explanations omit their
-/// reference.
+/// - requires: `stdout` is writable and `explanation` was built by the library.
+/// - ensures: writes reference, status, summary, and a trailing blank line.
+/// - fails: stdout write errors propagate.
+/// - panics: debug assertion failure only if library explanations omit their
+///   reference.
 fn write_explain(
     stdout: &mut impl Write,
     explanation: &Explain,
@@ -634,12 +535,6 @@ fn write_explain(
 }
 
 /// Return the stable display spelling for an explanation confidence status.
-///
-/// # Contract
-/// Preconditions: `status` was produced by the library classifier.
-/// Postconditions: returns the same spelling the former Debug output used.
-/// Failure modes: unknown future statuses are conservatively displayed as
-/// `Unknown`. Panics: none.
 fn explain_status_label(status: ExplainStatus) -> &'static str
 {
     match status {
@@ -652,11 +547,11 @@ fn explain_status_label(status: ExplainStatus) -> &'static str
 /// Read the requested diagnostic input source into memory.
 ///
 /// # Contract
-/// Preconditions: `input.raw` is `-` for stdin or a path readable by this
-/// process. Postconditions: returns the full input text without protocol
-/// interpretation. Failure modes: stdin or filesystem read errors propagate.
-/// Panics: debug assertion failure only if clap provides an empty non-stdin
-/// input path.
+/// - requires: `input.raw` is `-` for stdin or a path readable by this process.
+/// - ensures: returns the full input text without protocol interpretation.
+/// - fails: stdin or filesystem read errors propagate.
+/// - panics: debug assertion failure only if clap provides an empty non-stdin
+///   input path.
 fn read_input(input: &InputPath) -> Result<String, CliError>
 {
     debug_assert!(
@@ -675,10 +570,11 @@ fn read_input(input: &InputPath) -> Result<String, CliError>
 /// Convert batch extra arguments into strict UTF-8 strings.
 ///
 /// # Contract
-/// Preconditions: `extra_args` came from clap after the batch `--` separator.
-/// Postconditions: returns every argument unchanged as UTF-8 and preserves
-/// order. Failure modes: returns a CLI error naming the first argument whose OS
-/// bytes are not valid UTF-8. Panics: none.
+/// - requires: `extra_args` came from clap after the batch `--` separator.
+/// - ensures: returns every argument unchanged as UTF-8 and preserves order.
+/// - fails: returns a CLI error naming the first argument whose OS bytes are
+///   not valid UTF-8.
+/// - panics: none.
 fn utf8_extra_args(extra_args: Vec<OsString>) -> Result<Vec<String>, CliError>
 {
     let mut utf8_args = Vec::with_capacity(extra_args.len());
@@ -697,10 +593,11 @@ fn utf8_extra_args(extra_args: Vec<OsString>) -> Result<Vec<String>, CliError>
 /// Write a rendered digest to standard output.
 ///
 /// # Contract
-/// Preconditions: `digest` is internally consistent and `format` is supported
-/// by the renderer. Postconditions: writes the rendered digest and ensures it
-/// ends with a newline. Failure modes: render or stdout write errors propagate.
-/// Panics: debug assertion failure only if the renderer returns empty output.
+/// - requires: `digest` is internally consistent and `format` is supported by
+///   the renderer.
+/// - ensures: writes the rendered digest and ensures it ends with a newline.
+/// - fails: render or stdout write errors propagate.
+/// - panics: debug assertion failure only if the renderer returns empty output.
 fn write_digest(
     digest: &aifix::model::Digest,
     format: OutputFormat,
@@ -723,10 +620,10 @@ fn write_digest(
 /// Return the process current directory as a UTF-8 path.
 ///
 /// # Contract
-/// Preconditions: the process has an accessible current directory.
-/// Postconditions: returns a camino UTF-8 path buffer.
-/// Failure modes: current directory IO errors or non-UTF-8 paths propagate.
-/// Panics: none.
+/// - requires: the process has an accessible current directory.
+/// - ensures: returns a camino UTF-8 path buffer.
+/// - fails: current directory IO errors or non-UTF-8 paths propagate.
+/// - panics: none.
 fn current_utf8_dir() -> Result<Utf8PathBuf, CliError>
 {
     let cwd = std::env::current_dir()?;
@@ -735,12 +632,6 @@ fn current_utf8_dir() -> Result<Utf8PathBuf, CliError>
 }
 
 /// Return a printable path, using `-` when that path was not discovered.
-///
-/// # Contract
-/// Preconditions: `path`, when present, already satisfies camino UTF-8
-/// invariants. Postconditions: returns the original path string or the `-`
-/// marker without allocation. Failure modes: none.
-/// Panics: none.
 fn display_optional_path(path: Option<&Utf8Path>) -> &str
 {
     path.map_or("-", Utf8Path::as_str)

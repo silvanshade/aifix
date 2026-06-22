@@ -22,12 +22,6 @@ mod tests
     use serde_json::json;
 
     /// Returns the test-built `aifix` binary path provided by Cargo.
-    ///
-    /// # Contract
-    /// Preconditions: Cargo built the integration-test binary with
-    /// `CARGO_BIN_EXE_aifix`. Postconditions: returns the executable path
-    /// without allocation. Failure modes: compile-time environment lookup
-    /// fails before tests run. Panics: none.
     fn binary_path() -> &'static str
     {
         env!("CARGO_BIN_EXE_aifix")
@@ -37,10 +31,17 @@ mod tests
     /// output.
     ///
     /// # Contract
-    /// Preconditions: Cargo exposed a runnable `aifix` binary for this test
-    /// process. Postconditions: returns captured status, stdout, and stderr
-    /// without interpreting them. Failure modes: process-spawn errors are
-    /// returned to the test. Panics: none.
+    /// - requires: Cargo exposed a runnable `aifix` binary for this test
+    ///   process.
+    /// - ensures: returns captured status, stdout, and stderr without
+    ///   interpreting the subprocess result.
+    /// - fails: returns process-spawn errors to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`std::io::Error`] when the subprocess cannot be
+    /// spawned.
     fn run_aifix<I, S>(args: I) -> Result<Output, Box<dyn Error>>
     where
         I: IntoIterator<Item = S>,
@@ -50,12 +51,6 @@ mod tests
     }
 
     /// Captured MCP subprocess transcript used by stdio integration tests.
-    ///
-    /// # Contract
-    /// Preconditions: values come from one completed `aifix mcp` subprocess.
-    /// Postconditions: stores parsed stdout JSON-RPC responses alongside stderr
-    /// text for later assertion failures. Failure modes: none while held as a
-    /// value. Panics: none.
     struct McpOutput
     {
         /// Parsed newline-delimited JSON-RPC response objects from stdout.
@@ -67,12 +62,19 @@ mod tests
     /// Runs the MCP server as a real stdio JSON-RPC subprocess.
     ///
     /// # Contract
-    /// Preconditions: Cargo exposed a runnable `aifix` binary and `requests`
-    /// contains JSON-RPC objects. Postconditions: writes one JSON request per
-    /// line, closes stdin, waits for process exit, and parses each stdout line
-    /// as JSON. Failure modes: process, stdin, non-zero exit, UTF-8, empty
-    /// response, or JSON parse errors are returned with stderr preserved.
-    /// Panics: none.
+    /// - requires: Cargo exposed a runnable `aifix` binary and `requests`
+    ///   contains JSON-RPC objects.
+    /// - ensures: writes one JSON request per line, closes stdin, waits for
+    ///   process exit, and parses non-empty stdout lines as JSON responses.
+    /// - provides: stderr is preserved for assertion diagnostics.
+    /// - fails: returns process, stdin, non-zero exit, UTF-8, empty-response,
+    ///   or JSON parse errors.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns process, stdin-write, non-zero-exit, UTF-8, empty-response, or
+    /// JSON parse errors from the MCP subprocess boundary.
     fn run_mcp(requests: &[Value]) -> Result<McpOutput, Box<dyn Error>>
     {
         let mut child = Command::new(binary_path())
@@ -128,11 +130,6 @@ mod tests
     }
 
     /// Builds the JSON-RPC initialize request shared by MCP integration tests.
-    ///
-    /// # Contract
-    /// Preconditions: `id` is unique within the request batch. Postconditions:
-    /// returns a standards-shaped initialize request with deterministic client
-    /// metadata. Failure modes: none. Panics: none.
     fn mcp_initialize(id: u64) -> Value
     {
         json!({
@@ -151,11 +148,6 @@ mod tests
     }
 
     /// Builds the JSON-RPC initialized notification expected after initialize.
-    ///
-    /// # Contract
-    /// Preconditions: none. Postconditions: returns a notification without an
-    /// id so the server must not emit a response for it. Failure modes: none.
-    /// Panics: none.
     fn mcp_initialized_notification() -> Value
     {
         json!({
@@ -165,11 +157,6 @@ mod tests
     }
 
     /// Builds an MCP `tools/call` request.
-    ///
-    /// # Contract
-    /// Preconditions: `name` names a requested MCP tool and `arguments` is an
-    /// object accepted by that tool. Postconditions: returns one JSON-RPC
-    /// request. Failure modes: none. Panics: none.
     fn mcp_tool_call(
         id: u64,
         name: &str,
@@ -190,10 +177,15 @@ mod tests
     /// Finds a JSON-RPC response by numeric id.
     ///
     /// # Contract
-    /// Preconditions: `output` came from `run_mcp`. Postconditions: returns the
-    /// matching response object. Failure modes: missing response ids are
-    /// returned with the full response batch and stderr for diagnosis. Panics:
-    /// none.
+    /// - requires: `output` came from `run_mcp`.
+    /// - ensures: returns the matching response object without cloning it.
+    /// - fails: missing response ids include the full response batch and stderr
+    ///   in the returned test error.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] when the requested JSON-RPC id is absent.
     fn mcp_response_by_id(
         output: &McpOutput,
         id: u64,
@@ -215,9 +207,16 @@ mod tests
     /// Returns a successful JSON-RPC result object.
     ///
     /// # Contract
-    /// Preconditions: `response` is a JSON-RPC response. Postconditions:
-    /// returns the result field after rejecting protocol errors. Failure modes:
-    /// JSON-RPC error or missing result are returned to the test. Panics: none.
+    /// - requires: `response` is a JSON-RPC response from the MCP subprocess.
+    /// - ensures: returns the result field only after rejecting protocol
+    ///   errors.
+    /// - fails: returns JSON-RPC error objects or missing results to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] when the response is a JSON-RPC error or
+    /// omits `result`.
     fn mcp_result(response: &Value) -> Result<&Value, Box<dyn Error>>
     {
         require(response.get("error").is_none(), || {
@@ -232,10 +231,17 @@ mod tests
     /// Returns the concatenated text content from a successful MCP tool result.
     ///
     /// # Contract
-    /// Preconditions: `response` is a `tools/call` response. Postconditions:
-    /// returns all text content after validating `isError` is not true. Failure
-    /// modes: tool errors, missing content, or missing text are returned to the
-    /// test. Panics: none.
+    /// - requires: `response` is an MCP `tools/call` response.
+    /// - ensures: concatenates all text content segments after validating
+    ///   `isError` is not true.
+    /// - fails: returns tool errors, missing content, or missing text to the
+    ///   test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] when the tool reports `isError`, omits
+    /// content, or contains no text segments.
     fn mcp_tool_text(response: &Value) -> Result<String, Box<dyn Error>>
     {
         let result = mcp_result(response)?;
@@ -269,11 +275,18 @@ mod tests
     /// Writes a uniquely named temporary input file for a CLI scenario.
     ///
     /// # Contract
-    /// Preconditions: `name` is non-empty and contains only filename-safe test
-    /// text. Postconditions: returns the path to a file containing exactly
-    /// `contents`. Failure modes: empty fixture names, system-clock errors,
-    /// omitted file names, or filesystem errors are returned to the test.
-    /// Panics: none.
+    /// - requires: `name` is non-empty and filename-safe for the host temp
+    ///   directory.
+    /// - ensures: returns a process-and-timestamp-scoped path whose contents
+    ///   exactly match `contents`.
+    /// - fails: returns empty fixture names, system-clock errors, omitted file
+    ///   names, or filesystem write errors to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, system-clock, or filesystem write errors from temp
+    /// fixture creation.
     fn write_temp_input(
         name: &str,
         contents: &str,
@@ -298,11 +311,17 @@ mod tests
     /// Creates a uniquely named temporary directory for a CLI scenario.
     ///
     /// # Contract
-    /// Preconditions: `name` is non-empty and contains only filename-safe test
-    /// text. Postconditions: returns the path to an existing directory unique
-    /// to this test process and timestamp. Failure modes:
-    /// empty fixture names, system-clock errors, omitted directory names, or
-    /// filesystem errors are returned to the test. Panics: none.
+    /// - requires: `name` is non-empty and filename-safe for the host temp
+    ///   directory.
+    /// - ensures: returns an existing process-and-timestamp-scoped directory.
+    /// - fails: returns empty fixture names, system-clock errors, omitted final
+    ///   components, or filesystem creation errors to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, system-clock, or filesystem creation errors from
+    /// temp directory setup.
     fn create_temp_dir(name: &str) -> Result<PathBuf, Box<dyn Error>>
     {
         require(!name.is_empty(), || {
@@ -324,10 +343,16 @@ mod tests
     /// Converts successful command output into a UTF-8 string.
     ///
     /// # Contract
-    /// Preconditions: `output` came from `run_aifix`.
-    /// Postconditions: returns stdout as valid UTF-8 after validating
-    /// successful process exit. Failure modes: unsuccessful exit or invalid
-    /// UTF-8 is returned to the test. Panics: none.
+    /// - requires: `output` came from `run_aifix`.
+    /// - ensures: returns stdout as UTF-8 only after validating successful CLI
+    ///   exit.
+    /// - fails: returns unsuccessful exit status or invalid UTF-8 to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] for unsuccessful process status and
+    /// [`std::string::FromUtf8Error`] for invalid stdout bytes.
     fn successful_stdout(output: Output) -> Result<String, Box<dyn Error>>
     {
         let status_code = output
@@ -356,10 +381,16 @@ mod tests
     /// Converts failing command stderr into a UTF-8 string.
     ///
     /// # Contract
-    /// Preconditions: `output` came from `run_aifix`.
-    /// Postconditions: returns stderr as valid UTF-8 after validating failed
-    /// process exit. Failure modes: successful exit or invalid UTF-8 is
-    /// returned to the test. Panics: none.
+    /// - requires: `output` came from `run_aifix`.
+    /// - ensures: returns stderr as UTF-8 only after validating failed CLI
+    ///   exit.
+    /// - fails: returns successful exit status or invalid UTF-8 to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] when the process succeeded and
+    /// [`std::string::FromUtf8Error`] for invalid stderr bytes.
     fn unsuccessful_stderr(output: Output) -> Result<String, Box<dyn Error>>
     {
         require(!output.status.success(), || {
@@ -376,10 +407,17 @@ mod tests
     /// Parses JSON stdout from a successful command.
     ///
     /// # Contract
-    /// Preconditions: `output` came from a command requested to render JSON.
-    /// Postconditions: returns parsed JSON after validating successful CLI
-    /// exit. Failure modes: unsuccessful exit, empty stdout, invalid UTF-8, or
-    /// invalid JSON is returned. Panics: none.
+    /// - requires: `output` came from a command requested to render JSON.
+    /// - ensures: returns parsed JSON after validating successful CLI exit and
+    ///   non-empty stdout.
+    /// - fails: returns unsuccessful exit, empty stdout, invalid UTF-8, or
+    ///   invalid JSON to the test.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns subprocess/status, UTF-8, empty-stdout, or
+    /// [`serde_json::Error`] parse failures from JSON CLI output.
     fn successful_json(output: Output) -> Result<Value, Box<dyn Error>>
     {
         let stdout = successful_stdout(output)?;
@@ -390,12 +428,6 @@ mod tests
     }
 
     /// Returns true when any JSON string leaf contains `needle`.
-    ///
-    /// # Contract
-    /// Preconditions: `needle` is the exact substring expected in the rendered
-    /// digest. Postconditions: returns true if any reachable string leaf
-    /// contains `needle`. Failure modes: none.
-    /// Panics: none.
     fn json_contains_str(
         value: &Value,
         needle: &str,
@@ -412,12 +444,6 @@ mod tests
     }
 
     /// Returns true when any JSON number leaf equals `expected`.
-    ///
-    /// # Contract
-    /// Preconditions: `expected` is representable as an unsigned JSON number.
-    /// Postconditions: returns true if any reachable numeric leaf equals
-    /// `expected`. Failure modes: none.
-    /// Panics: none.
     fn json_contains_u64(
         value: &Value,
         expected: u64,
@@ -434,12 +460,6 @@ mod tests
     }
 
     /// Returns true when any object field named `field` equals `expected`.
-    ///
-    /// # Contract
-    /// Preconditions: `field` is the exact object key under inspection.
-    /// Postconditions: returns true if any reachable object has the requested
-    /// unsigned value. Failure modes: none.
-    /// Panics: none.
     fn json_field_equals_u64(
         value: &Value,
         field: &str,
@@ -461,12 +481,6 @@ mod tests
     }
 
     /// Converts a filesystem path into the UTF-8 CLI path expected by `aifix`.
-    ///
-    /// # Contract
-    /// Preconditions: `path` identifies an existing or planned CLI input.
-    /// Postconditions: returns a borrowed string slice without allocation when
-    /// the path is UTF-8. Failure modes: non-UTF-8 paths are returned as test
-    /// errors. Panics: none.
     fn path_to_str(path: &Path) -> Result<&str, Box<dyn Error>>
     {
         path.to_str().ok_or_else(|| {
@@ -480,12 +494,6 @@ mod tests
 
     /// Converts a test invariant into a fallible test result instead of
     /// panicking.
-    ///
-    /// # Contract
-    /// Preconditions: `message` precisely describes the violated invariant when
-    /// `condition` is false. Postconditions: returns `Ok(())` for true
-    /// conditions without building the failure message. Failure modes:
-    /// false conditions are returned as test errors. Panics: none.
     fn require<F>(
         condition: bool,
         message: F,
@@ -501,12 +509,6 @@ mod tests
     }
 
     /// Verifies that MCP initialize advertises tool support.
-    ///
-    /// # Contract
-    /// Preconditions: Cargo exposes a runnable `aifix` binary. Postconditions:
-    /// confirms stdio JSON-RPC initialize succeeds and includes the MCP tools
-    /// capability. Failure modes: subprocess, JSON, or capability invariant
-    /// errors fail the test. Panics: none.
     #[test]
     fn mcp_initialize_advertises_tools_capability() -> Result<(), Box<dyn Error>>
     {
@@ -524,12 +526,6 @@ mod tests
     }
 
     /// Verifies that MCP tools/list exposes the diagnostic tools.
-    ///
-    /// # Contract
-    /// Preconditions: Cargo exposes a runnable `aifix` binary. Postconditions:
-    /// confirms tools/list contains the MCP tool names required by the public
-    /// contract. Failure modes: subprocess, JSON, or missing-name invariant
-    /// errors fail the test. Panics: none.
     #[test]
     fn mcp_tools_list_includes_diagnostic_tools() -> Result<(), Box<dyn Error>>
     {
@@ -569,13 +565,6 @@ mod tests
     }
 
     /// Verifies that the MCP pipeline tool renders TypeScript diagnostics.
-    ///
-    /// # Contract
-    /// Preconditions: Cargo exposes a runnable `aifix` binary. Postconditions:
-    /// confirms `aifix_pipeline` parses TypeScript text via stdin JSON-RPC and
-    /// returns Markdown preserving source code and path. Failure modes:
-    /// subprocess, JSON, tool, or text invariant errors fail the test. Panics:
-    /// none.
     #[test]
     fn mcp_pipeline_typescript_text_returns_markdown() -> Result<(), Box<dyn Error>>
     {
@@ -608,13 +597,6 @@ mod tests
     }
 
     /// Verifies project-local MCP dedupe state and guidance reuse.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can create a temporary project root and
-    /// run `aifix mcp`. Postconditions: confirms first-seen diagnostics are
-    /// returned, repeated diagnostics are suppressed, and guidance reflects the
-    /// observed shape. Failure modes: filesystem, subprocess, JSON, tool, or
-    /// text invariant errors fail the test. Panics: none.
     #[test]
     fn mcp_dedupe_suppresses_repeated_diagnostic() -> Result<(), Box<dyn Error>>
     {
@@ -690,14 +672,6 @@ mod tests
 
     /// Verifies MCP fix reporting can be replayed in suggest mode with audit
     /// JSON.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can create a temporary project root and
-    /// run `aifix mcp`. Postconditions: confirms a reported diagnostic fix is
-    /// returned as suggestion text for the same diagnostic and that the MCP
-    /// JSON surface reports exact per-diagnostic audit metadata without
-    /// running git. Failure modes: filesystem, subprocess, JSON, tool, or
-    /// text invariant errors fail the test. Panics: none.
     #[test]
     fn mcp_reported_fix_replays_as_suggestion() -> Result<(), Box<dyn Error>>
     {
@@ -794,14 +768,6 @@ diff --git a/src/fix.ts b/src/fix.ts
 
     /// Verifies clippy-json diagnostics round-trip through report-fix and
     /// replay.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can create a Rust source file under a
-    /// temporary project root and run `aifix mcp`. Postconditions: confirms a
-    /// clippy-json parsed diagnostic matches the diagnostic-backed cached fix
-    /// for a present target file in suggest mode. Failure modes: filesystem,
-    /// subprocess, JSON, tool, or text invariant errors fail the test. Panics:
-    /// none.
     #[test]
     fn mcp_clippy_json_report_fix_replays_for_present_target() -> Result<(), Box<dyn Error>>
     {
@@ -887,13 +853,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies MCP replay emits a no-match audit entry for unmatched
     /// diagnostics.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can create a temporary project root and
-    /// run `aifix mcp`. Postconditions: confirms replay JSON includes one audit
-    /// entry with no-match confidence and no matched signature when the cache
-    /// has no applicable fix. Failure modes: filesystem, subprocess, JSON,
-    /// tool, or text invariant errors fail the test. Panics: none.
     #[test]
     fn mcp_replay_fixes_reports_no_match_audit() -> Result<(), Box<dyn Error>>
     {
@@ -960,14 +919,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies that clippy compiler-message JSONL becomes a grouped JSON
     /// digest.
-    ///
-    /// # Contract
-    /// Preconditions: the fixture is checked out under this crate's
-    /// `tests/fixtures` directory and Cargo exposes the test-built binary.
-    /// Postconditions: confirms code, path, message, and count survive JSON
-    /// rendering. Failure modes: missing fixture, non-UTF-8 fixture path,
-    /// command, UTF-8, JSON, or digest-invariant failures fail the test.
-    /// Panics: none.
     #[test]
     fn clippy_json_pipeline_emits_json_digest() -> Result<(), Box<dyn Error>>
     {
@@ -1011,13 +962,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies that TypeScript text diagnostics render as agent-readable
     /// Markdown.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write a temporary input file and run
-    /// the binary. Postconditions: confirms code, path, and message survive
-    /// Markdown rendering. Failure modes: command, UTF-8, filesystem, missing
-    /// temporary fixture, or Markdown-invariant failures fail the test.
-    /// Panics: none.
     #[test]
     fn typescript_text_pipeline_emits_markdown_guidance() -> Result<(), Box<dyn Error>>
     {
@@ -1058,13 +1002,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies that empty auto pipeline input is an explicit zero-diagnostic
     /// digest.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write an empty input file and run
-    /// the binary. Postconditions: confirms auto protocol does not treat empty
-    /// input as a generic diagnostic and reports zero counts, groups, and
-    /// diagnostics. Failure modes: command, UTF-8, JSON, filesystem, or
-    /// digest-invariant failures fail the test. Panics: none.
     #[test]
     fn auto_pipeline_empty_input_emits_zero_diagnostics() -> Result<(), Box<dyn Error>>
     {
@@ -1103,13 +1040,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies that MCP pipeline results preserve empty auto input as an
     /// explicit zero-diagnostic digest.
-    ///
-    /// # Contract
-    /// Preconditions: Cargo exposes a runnable `aifix` binary. Postconditions:
-    /// confirms the MCP API returns JSON with zero diagnostics instead of an
-    /// error or generic text diagnostic for empty protocol:auto input. Failure
-    /// modes: subprocess, JSON, tool, or digest-invariant failures fail the
-    /// test. Panics: none.
     #[test]
     fn mcp_pipeline_empty_input_returns_zero_diagnostics() -> Result<(), Box<dyn Error>>
     {
@@ -1144,13 +1074,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that noisy cargo streams retain valid compiler diagnostics.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write a temporary cargo JSONL stream
-    /// and run the binary. Postconditions: confirms valid compiler-message
-    /// diagnostics survive adjacent non-diagnostic cargo events, plain text,
-    /// and truncated JSON. Failure modes: command, UTF-8, JSON, filesystem, or
-    /// digest-invariant failures fail the test. Panics: none.
     #[test]
     fn noisy_cargo_pipeline_retains_good_diagnostics() -> Result<(), Box<dyn Error>>
     {
@@ -1188,13 +1111,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that malformed-only cargo-shaped structured input is rejected.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write a malformed cargo JSONL stream
-    /// and run the binary. Postconditions: confirms auto protocol reports a
-    /// JSON boundary error rather than falling through to generic diagnostics.
-    /// Failure modes: command, UTF-8, filesystem, or error-message invariant
-    /// failures fail the test. Panics: none.
     #[test]
     fn malformed_only_cargo_pipeline_is_rejected() -> Result<(), Box<dyn Error>>
     {
@@ -1220,14 +1136,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that maxDiagnostics hides only samples, not counts.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write multiple related diagnostics
-    /// and run the binary. Postconditions: confirms Markdown reports full
-    /// counts while visibly describing hidden group samples when
-    /// maxDiagnostics truncates retained examples. Failure modes: command,
-    /// UTF-8, filesystem, or Markdown-invariant failures fail the test. Panics:
-    /// none.
     #[test]
     fn markdown_max_diagnostics_reports_hidden_samples() -> Result<(), Box<dyn Error>>
     {
@@ -1267,13 +1175,6 @@ diff --git a/src/main.rs b/src/main.rs
 
     /// Verifies that LSP JSON diagnostics can be rendered without raw payload
     /// fields.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can write a temporary input file and run
-    /// the binary. Postconditions: confirms compact JSON preserves semantic
-    /// fields and omits raw payloads. Failure modes: command, UTF-8, JSON,
-    /// filesystem, missing temporary fixture, or compact-digest invariant
-    /// failures fail the test. Panics: none.
     #[test]
     fn lsp_json_pipeline_emits_compact_json_digest() -> Result<(), Box<dyn Error>>
     {
@@ -1337,12 +1238,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that custom batch mode invokes a real local executable.
-    ///
-    /// # Contract
-    /// Preconditions: `printf` is available on the integration-test platform.
-    /// Postconditions: confirms stdout and invocation metadata are preserved in
-    /// JSON. Failure modes: command, UTF-8, JSON, or batch-digest invariant
-    /// failures fail the test. Panics: none.
     #[test]
     fn custom_batch_command_uses_real_executable() -> Result<(), Box<dyn Error>>
     {
@@ -1375,14 +1270,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that custom batch capture rejects over-limit stdout.
-    ///
-    /// # Contract
-    /// Preconditions: `yes` is available on the Unix integration-test platform
-    /// and terminates when stdout is closed by bounded capture.
-    /// Postconditions: confirms oversized stdout is rejected before parsing or
-    /// invocation retention.
-    /// Failure modes: command, UTF-8, or error-message invariant failures fail
-    /// the test. Panics: none.
     #[test]
     fn custom_batch_command_rejects_over_limit_stdout() -> Result<(), Box<dyn Error>>
     {
@@ -1407,13 +1294,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that batch rejects non-UTF-8 extra arguments before execution.
-    ///
-    /// # Contract
-    /// Preconditions: the Unix test process can construct invalid-UTF-8 OS
-    /// strings and run the binary. Postconditions: confirms invalid bytes after
-    /// `--` are rejected at the CLI boundary and are not lossily converted into
-    /// an executable or argument. Failure modes: command, UTF-8, or
-    /// error-message invariant failures fail the test. Panics: none.
     #[test]
     fn batch_rejects_non_utf8_extra_args() -> Result<(), Box<dyn Error>>
     {
@@ -1434,13 +1314,6 @@ diff --git a/src/main.rs b/src/main.rs
     }
 
     /// Verifies that project config discovery rejects non-file `aifix.toml`.
-    ///
-    /// # Contract
-    /// Preconditions: the test process can create temporary directories and run
-    /// the binary. Postconditions: confirms an existing directory named
-    /// `aifix.toml` is reported as a configuration error instead of skipped.
-    /// Failure modes: filesystem, command, UTF-8, or error-message invariant
-    /// failures fail the test. Panics: none.
     #[test]
     fn batch_rejects_non_file_project_config() -> Result<(), Box<dyn Error>>
     {

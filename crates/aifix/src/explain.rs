@@ -8,12 +8,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Local confidence state for an explanation.
-///
-/// # Contract
-/// Preconditions: serialized using kebab-case wire labels.
-/// Postconditions: captures whether source and/or code classification is known.
-/// Failure modes: constructing the enum directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
@@ -28,13 +22,6 @@ pub enum ExplainStatus
 }
 
 /// Deterministic explanation metadata attached to grouped diagnostics.
-///
-/// # Contract
-/// Preconditions: built by local classifier constructors in this module.
-/// Postconditions: carries a stable reference, confidence state, and concise
-/// agent-facing summary.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Explain
@@ -50,13 +37,13 @@ pub struct Explain
 /// Return deterministic explanation metadata for a diagnostic source/code pair.
 ///
 /// # Contract
-/// Preconditions: `source` and `code`, when present, are raw diagnostic labels
-/// that may contain surrounding whitespace.
-/// Postconditions: returns a stable local classification without network
-/// access; recognized families receive deterministic references and unknown
-/// families receive the documented fallback.
-/// Failure modes: none.
-/// Panics: none.
+/// - requires: `source` and `code`, when present, are raw diagnostic labels
+///   that may contain surrounding whitespace.
+/// - ensures: returns a stable local classification without network access;
+///   recognized families receive deterministic references and unknown families
+///   receive the documented fallback.
+/// - fails: none.
+/// - panics: none.
 #[must_use]
 #[inline]
 pub fn explain_code(
@@ -168,23 +155,17 @@ pub fn explain_code(
 }
 
 /// Constructors for deterministic explanation metadata.
-///
-/// # Contract
-/// Preconditions: implemented for locally classified explanation payloads.
-/// Postconditions: constructors assign the intended confidence status.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors document their debug-only assertions precisely.
 impl Explain
 {
     /// Construct a known diagnostic explanation.
     ///
     /// # Contract
-    /// Preconditions: `explain_ref` and `summary` are already normalized for
-    /// agent-facing output.
-    /// Postconditions: returns an explanation with `Known` status and the
-    /// provided payloads unchanged.
-    /// Failure modes: none.
-    /// Panics: debug builds may panic if either payload is empty.
+    /// - requires: `explain_ref` and `summary` are already normalized for
+    ///   agent-facing output.
+    /// - ensures: returns an explanation with `Known` status and the provided
+    ///   payloads unchanged.
+    /// - fails: none.
+    /// - panics: debug builds may panic if either payload is empty.
     #[must_use]
     fn known(
         explain_ref: String,
@@ -206,12 +187,12 @@ impl Explain
     /// Construct a source-known fallback explanation.
     ///
     /// # Contract
-    /// Preconditions: `explain_ref` and `summary` are static, non-empty
-    /// descriptions for a recognized diagnostic source.
-    /// Postconditions: returns an explanation with `SourceKnown` status and
-    /// owned copies of the provided text.
-    /// Failure modes: none.
-    /// Panics: debug builds may panic if either fallback payload is empty.
+    /// - requires: `explain_ref` and `summary` are static, non-empty
+    ///   descriptions for a recognized diagnostic source.
+    /// - ensures: returns an explanation with `SourceKnown` status and owned
+    ///   copies of the provided text.
+    /// - fails: none.
+    /// - panics: debug builds may panic if either fallback payload is empty.
     #[must_use]
     fn source_known(
         explain_ref: &str,
@@ -234,13 +215,6 @@ impl Explain
     }
 
     /// Construct the final unknown fallback explanation.
-    ///
-    /// # Contract
-    /// Preconditions: none.
-    /// Postconditions: returns the stable unknown explanation used when neither
-    /// source nor code can be classified locally.
-    /// Failure modes: none.
-    /// Panics: none.
     #[must_use]
     fn unknown() -> Self
     {
@@ -253,13 +227,6 @@ impl Explain
 }
 
 /// Return true when a normalized source identifies rustc diagnostics.
-///
-/// # Contract
-/// Preconditions: `source` is already trimmed and lowercased.
-/// Postconditions: returns true for rustc-containing source labels and the
-/// exact `rust` source label.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_rust_source(source: &str) -> bool
 {
@@ -267,12 +234,6 @@ fn is_rust_source(source: &str) -> bool
 }
 
 /// Return true when a normalized source identifies Clippy diagnostics.
-///
-/// # Contract
-/// Preconditions: `source` is already trimmed and lowercased.
-/// Postconditions: returns true when the diagnostic source names Clippy.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_clippy_source(source: &str) -> bool
 {
@@ -280,12 +241,6 @@ fn is_clippy_source(source: &str) -> bool
 }
 
 /// Return true when a normalized source identifies oxlint diagnostics.
-///
-/// # Contract
-/// Preconditions: `source` is already trimmed and lowercased.
-/// Postconditions: returns true when the diagnostic source names oxlint.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_oxlint_source(source: &str) -> bool
 {
@@ -293,13 +248,6 @@ fn is_oxlint_source(source: &str) -> bool
 }
 
 /// Return true when code-only JS/TS fallbacks are allowed for a source.
-///
-/// # Contract
-/// Preconditions: `source` is already trimmed and lowercased.
-/// Postconditions: returns true only for unknown sources or labels associated
-/// with JavaScript and TypeScript tooling.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn source_allows_js_ts_code_fallback(source: &str) -> bool
 {
@@ -315,13 +263,6 @@ fn source_allows_js_ts_code_fallback(source: &str) -> bool
 }
 
 /// Return true when a code matches rustc's canonical `E####` shape.
-///
-/// # Contract
-/// Preconditions: `value` is an untrusted diagnostic code candidate.
-/// Postconditions: returns true only for `E` followed by exactly four ASCII
-/// digits, using checked slice access throughout.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_rust_error_code(value: &str) -> bool
 {
@@ -334,13 +275,6 @@ fn is_rust_error_code(value: &str) -> bool
 }
 
 /// Return true when a code is written as a Clippy lint path.
-///
-/// # Contract
-/// Preconditions: `value` is an untrusted diagnostic code candidate.
-/// Postconditions: returns true for the accepted `clippy::` and `clippy/`
-/// namespace prefixes.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_clippy_code(value: &str) -> bool
 {
@@ -348,13 +282,6 @@ fn is_clippy_code(value: &str) -> bool
 }
 
 /// Normalize a Clippy lint code into the anchor used by Clippy's lint index.
-///
-/// # Contract
-/// Preconditions: `value` is a Clippy code or lint-like string.
-/// Postconditions: removes accepted Clippy namespace prefixes and replaces
-/// hyphens with underscores for URL anchor compatibility.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn normalize_clippy_lint(value: &str) -> String
 {
@@ -365,13 +292,6 @@ fn normalize_clippy_lint(value: &str) -> String
 }
 
 /// Extract TypeScript's canonical `TS####` code shape.
-///
-/// # Contract
-/// Preconditions: `value` is an untrusted diagnostic code candidate.
-/// Postconditions: returns `Some("TS####")` only when the candidate is exactly
-/// four ASCII digits with an optional `TS` prefix; otherwise returns `None`.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn typescript_code(value: &str) -> Option<String>
 {
@@ -385,12 +305,6 @@ fn typescript_code(value: &str) -> Option<String>
 
 /// Return true for common lint rule names outside the Rust and TypeScript
 /// spaces.
-///
-/// # Contract
-/// Preconditions: `value` is an untrusted diagnostic code candidate.
-/// Postconditions: returns true for namespace-like or lint-word-like strings.
-/// Failure modes: none.
-/// Panics: none.
 #[must_use]
 fn is_oxlint_like(value: &str) -> bool
 {
@@ -400,25 +314,12 @@ fn is_oxlint_like(value: &str) -> bool
 }
 
 /// Unit tests for deterministic diagnostic explanation classification.
-///
-/// # Contract
-/// Preconditions: private helpers remain available within this module.
-/// Postconditions: source-aware collision behavior is covered without network
-/// access.
-/// Failure modes: assertion failures report the mismatched classification.
-/// Panics: none beyond test assertions.
 #[cfg(test)]
 mod tests
 {
     use super::*;
 
     /// Verifies rustc lint labels are not classified as JavaScript lint rules.
-    ///
-    /// # Contract
-    /// Preconditions: rustc reports a lint-like diagnostic code.
-    /// Postconditions: the explanation remains in the Rust/rustc namespace.
-    /// Failure modes: assertions fail on a namespace or wording regression.
-    /// Panics: none beyond test assertions.
     #[test]
     fn rustc_unused_variables_resolves_as_rust_lint()
     {
@@ -431,13 +332,6 @@ mod tests
     }
 
     /// Verifies the plain Rust source label receives rustc lint wording.
-    ///
-    /// # Contract
-    /// Preconditions: source is the exact `rust` label accepted by the
-    /// classifier.
-    /// Postconditions: lint-like codes use a rustc reference.
-    /// Failure modes: assertions fail on a source-precedence regression.
-    /// Panics: none beyond test assertions.
     #[test]
     fn rust_source_dead_code_resolves_as_rust_lint()
     {
@@ -450,12 +344,6 @@ mod tests
     }
 
     /// Verifies Clippy sources accept bare and canonical lint names.
-    ///
-    /// # Contract
-    /// Preconditions: source identifies Clippy diagnostics.
-    /// Postconditions: all accepted code shapes resolve to Clippy references.
-    /// Failure modes: assertions fail on lost Clippy precedence.
-    /// Panics: none beyond test assertions.
     #[test]
     fn clippy_source_resolves_bare_and_canonical_lints()
     {
@@ -477,12 +365,6 @@ mod tests
     }
 
     /// Verifies unknown-source JavaScript lint codes retain oxlint behavior.
-    ///
-    /// # Contract
-    /// Preconditions: source is unknown and the code is lint-shaped.
-    /// Postconditions: the deterministic oxlint fallback remains available.
-    /// Failure modes: assertions fail if code-only JS/TS behavior is removed.
-    /// Panics: none beyond test assertions.
     #[test]
     fn unknown_source_lint_code_still_resolves_as_oxlint()
     {

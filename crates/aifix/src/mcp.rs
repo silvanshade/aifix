@@ -58,15 +58,16 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Run the line-oriented stdio MCP server until stdin reaches EOF.
 ///
 /// # Contract
-/// - Preconditions: stdin carries UTF-8 newline-delimited JSON-RPC objects and
+/// - requires: stdin carries UTF-8 newline-delimited JSON-RPC objects and
 ///   stdout is writable.
-/// - Postconditions: every request receives exactly one JSON response line;
+/// - ensures: every request receives exactly one JSON response line;
 ///   notifications receive no response; no logs are written to stdout.
-/// - Failure modes: stdin, stdout, or JSON serialization failures are returned
-///   as [`AifixError`] values. Tool-level runtime failures are returned inside
+/// - fails: stdin, stdout, or JSON serialization failures are returned as
+///   [`AifixError`] values. Tool-level runtime failures are returned inside
 ///   successful JSON-RPC tool result envelopes.
-/// - Panics: none.
+/// - panics: none.
 ///
+/// # Errors
 /// # Errors
 /// Returns an error when process IO fails or when a response cannot be
 /// serialized.
@@ -93,11 +94,11 @@ pub fn run_stdio_server() -> Result<(), AifixError>
 /// Handle one JSON-RPC input line.
 ///
 /// # Contract
-/// - Preconditions: `line` is one line without its trailing newline.
-/// - Postconditions: returns a response object for requests and malformed
-///   protocol frames, or `None` for notifications.
-/// - Failure modes: malformed JSON is converted to a JSON-RPC parse error.
-/// - Panics: none.
+/// - requires: `line` is one line without its trailing newline.
+/// - ensures: returns a response object for requests and malformed protocol
+///   frames, or `None` for notifications.
+/// - fails: malformed JSON is converted to a JSON-RPC parse error.
+/// - panics: none.
 #[must_use]
 fn handle_line(line: &str) -> Option<Value>
 {
@@ -114,12 +115,12 @@ fn handle_line(line: &str) -> Option<Value>
 /// Dispatch one decoded JSON-RPC message.
 ///
 /// # Contract
-/// - Preconditions: `message` was decoded from a single input line.
-/// - Postconditions: supported request methods return success responses;
-///   supported notifications return no response.
-/// - Failure modes: invalid requests and unknown protocol methods become
-///   JSON-RPC errors.
-/// - Panics: none.
+/// - requires: `message` was decoded from a single input line.
+/// - ensures: supported request methods return success responses; supported
+///   notifications return no response.
+/// - fails: invalid requests and unknown protocol methods become JSON-RPC
+///   errors.
+/// - panics: none.
 #[must_use]
 fn handle_message(message: &Value) -> Option<Value>
 {
@@ -153,13 +154,6 @@ fn handle_message(message: &Value) -> Option<Value>
 }
 
 /// Build a JSON-RPC success response.
-///
-/// # Contract
-/// - Preconditions: `id` is the request identifier and `result` is JSON
-///   serializable.
-/// - Postconditions: returns a JSON-RPC 2.0 success object.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn success_response(
     id: &Value,
@@ -174,12 +168,6 @@ fn success_response(
 }
 
 /// Build a JSON-RPC error response.
-///
-/// # Contract
-/// - Preconditions: `code` and `message` describe a protocol-level error.
-/// - Postconditions: returns a JSON-RPC 2.0 error object.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn error_response(
     id: &Value,
@@ -198,13 +186,6 @@ fn error_response(
 }
 
 /// Build the MCP initialize result.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: advertises the supported MCP version, server identity, and
-///   tools capability.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn initialize_result() -> Value
 {
@@ -221,14 +202,6 @@ fn initialize_result() -> Value
 }
 
 /// Build the MCP tools/list result.
-///
-/// # Contract
-/// - Preconditions: tool definitions below stay aligned with `tools/call`
-///   dispatch.
-/// - Postconditions: returns all six public tool descriptions and input
-///   schemas.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn tools_list_result() -> Value
 {
@@ -269,13 +242,6 @@ fn tools_list_result() -> Value
 }
 
 /// Build one MCP tool metadata object.
-///
-/// # Contract
-/// - Preconditions: `name` is the dispatch name and `schema` is a JSON Schema
-///   object.
-/// - Postconditions: returns MCP-compatible tool metadata.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn tool_schema(
     name: &str,
@@ -291,13 +257,6 @@ fn tool_schema(
 }
 
 /// Build the shared schema base for digest-rendering tools.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns reusable property definitions for protocol,
-///   format, diagnostics limit, project root, dedupe, and metrics toggles.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn pipeline_schema() -> Value
 {
@@ -318,12 +277,6 @@ fn pipeline_schema() -> Value
 }
 
 /// Build the batch tool schema.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns the MCP input schema for `aifix_batch`.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn batch_schema() -> Value
 {
@@ -345,12 +298,6 @@ fn batch_schema() -> Value
 }
 
 /// Build the report-fix tool schema.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns the MCP input schema for `aifix_report_fix`.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn report_fix_schema() -> Value
 {
@@ -369,12 +316,6 @@ fn report_fix_schema() -> Value
 }
 
 /// Build the replay-fixes tool schema.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns the MCP input schema for `aifix_replay_fixes`.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn replay_fixes_schema() -> Value
 {
@@ -397,12 +338,6 @@ fn replay_fixes_schema() -> Value
 }
 
 /// Build the dedupe tool schema.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns the MCP input schema for `aifix_dedupe`.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn dedupe_schema() -> Value
 {
@@ -422,12 +357,6 @@ fn dedupe_schema() -> Value
 }
 
 /// Build the guidance tool schema.
-///
-/// # Contract
-/// - Preconditions: none.
-/// - Postconditions: returns the MCP input schema for `aifix_guidance`.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn guidance_schema() -> Value
 {
@@ -445,12 +374,6 @@ fn guidance_schema() -> Value
 }
 
 /// Build the protocol enum schema.
-///
-/// # Contract
-/// - Preconditions: spellings mirror [`Protocol::as_str`].
-/// - Postconditions: returns a reusable JSON Schema enum.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn protocol_schema() -> Value
 {
@@ -461,12 +384,6 @@ fn protocol_schema() -> Value
 }
 
 /// Build the render format enum schema.
-///
-/// # Contract
-/// - Preconditions: spellings mirror [`OutputFormat::as_str`].
-/// - Postconditions: returns a reusable JSON Schema enum.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn format_schema() -> Value
 {
@@ -479,11 +396,10 @@ fn format_schema() -> Value
 /// Dispatch an MCP tool call.
 ///
 /// # Contract
-/// - Preconditions: `params` is the `tools/call` params value.
-/// - Postconditions: runtime failures are represented as tool errors, not
-///   JSON-RPC errors.
-/// - Failure modes: none at the JSON-RPC layer.
-/// - Panics: none.
+/// - requires: `params` is the `tools/call` params value.
+/// - ensures: runtime failures are represented as tool errors, not JSON-RPC
+///   errors.
+/// - panics: none.
 #[must_use]
 fn tools_call_result(params: Option<&Value>) -> Value
 {
@@ -497,11 +413,11 @@ fn tools_call_result(params: Option<&Value>) -> Value
 /// Dispatch one decoded tool call and return its result value.
 ///
 /// # Contract
-/// - Preconditions: `params` is an arbitrary JSON value supplied by the client.
-/// - Postconditions: known tools are invoked with deserialized arguments.
-/// - Failure modes: returns typed argument or runtime errors for `tool-result`
+/// - requires: `params` is an arbitrary JSON value supplied by the client.
+/// - ensures: known tools are invoked with deserialized arguments.
+/// - fails: returns typed argument or runtime errors for `tool-result`
 ///   encoding.
-/// - Panics: none.
+/// - panics: none.
 fn dispatch_tool_call(params: Option<&Value>) -> Result<ToolOutput, AifixError>
 {
     let raw_params = params.cloned().unwrap_or(Value::Null);
@@ -522,11 +438,11 @@ fn dispatch_tool_call(params: Option<&Value>) -> Result<ToolOutput, AifixError>
 /// Convert a successful tool output to display text.
 ///
 /// # Contract
-/// - Preconditions: `output` was produced by a tool implementation.
-/// - Postconditions: digest output uses existing renderers; JSON output is
-///   serialized deterministically by `serde_json`.
-/// - Failure modes: JSON serialization failures are returned.
-/// - Panics: none.
+/// - requires: `output` was produced by a tool implementation.
+/// - ensures: digest output uses existing renderers; JSON output is serialized
+///   deterministically by `serde_json`.
+/// - fails: JSON serialization failures are returned.
+/// - panics: none.
 fn tool_text(output: ToolOutput) -> Result<String, AifixError>
 {
     match output {
@@ -537,12 +453,6 @@ fn tool_text(output: ToolOutput) -> Result<String, AifixError>
 }
 
 /// Build a successful MCP tool result.
-///
-/// # Contract
-/// - Preconditions: `text` is human-readable tool output.
-/// - Postconditions: returns one text content part with `isError` false.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn tool_success(text: &str) -> Value
 {
@@ -556,12 +466,6 @@ fn tool_success(text: &str) -> Value
 }
 
 /// Build an MCP tool error result.
-///
-/// # Contract
-/// - Preconditions: `text` describes a runtime tool failure.
-/// - Postconditions: returns one text content part with `isError` true.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn tool_error(text: &str) -> Value
 {
@@ -577,13 +481,12 @@ fn tool_error(text: &str) -> Value
 /// Run the pipeline MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments contain `input` or `inputPath` and optional
+/// - requires: arguments contain `input` or `inputPath` and optional
 ///   parsing/rendering controls.
-/// - Postconditions: parses diagnostics, applies requested cache side effects,
-///   and returns a digest rendered by existing renderers.
-/// - Failure modes: returns argument, IO, parser, cache, or render setup
-///   errors.
-/// - Panics: none.
+/// - ensures: parses diagnostics, applies requested cache side effects, and
+///   returns a digest rendered by existing renderers.
+/// - fails: returns argument, IO, parser, cache, or render setup errors.
+/// - panics: none.
 fn run_pipeline_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: PipelineArgs = serde_json::from_value(arguments)?;
@@ -606,13 +509,13 @@ fn run_pipeline_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the batch MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments contain a non-empty profile and optional runtime
+/// - requires: arguments contain a non-empty profile and optional runtime
 ///   overrides.
-/// - Postconditions: mirrors CLI batch config resolution and applies requested
-///   cache side effects before rendering.
-/// - Failure modes: returns configuration, process, parser, cache, or rendering
-///   setup errors.
-/// - Panics: none.
+/// - ensures: mirrors CLI batch config resolution and applies requested cache
+///   side effects before rendering.
+/// - fails: returns configuration, process, parser, cache, or rendering setup
+///   errors.
+/// - panics: none.
 fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: BatchArgs = serde_json::from_value(arguments)?;
@@ -666,12 +569,11 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the report-fix MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments include a patch and either a diagnostic or
-///   signature.
-/// - Postconditions: records the patch in the project-local cache and returns
-///   the canonical signature plus cache path.
-/// - Failure modes: returns argument, cache, or IO errors.
-/// - Panics: none.
+/// - requires: arguments include a patch and either a diagnostic or signature.
+/// - ensures: records the patch in the project-local cache and returns the
+///   canonical signature plus cache path.
+/// - fails: returns argument, cache, or IO errors.
+/// - panics: none.
 fn run_report_fix_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: ReportFixArgs = serde_json::from_value(arguments)?;
@@ -693,12 +595,12 @@ fn run_report_fix_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the replay-fixes MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments identify diagnostics directly, through a digest,
-///   or through parseable input.
-/// - Postconditions: finds cached fixes, emits per-diagnostic audit JSON, and
+/// - requires: arguments identify diagnostics directly, through a digest, or
+///   through parseable input.
+/// - ensures: finds cached fixes, emits per-diagnostic audit JSON, and
 ///   optionally checks or applies trusted exact patches in the cache layer.
-/// - Failure modes: returns argument, parser, cache, or process errors.
-/// - Panics: none.
+/// - fails: returns argument, parser, cache, or process errors.
+/// - panics: none.
 fn run_replay_fixes_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: ReplayFixesArgs = serde_json::from_value(arguments)?;
@@ -719,13 +621,12 @@ fn run_replay_fixes_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the dedupe MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments identify diagnostics directly, through a digest,
-///   or through parseable input.
-/// - Postconditions: filters seen diagnostics, records newly surfaced
-///   signatures, and renders the surviving digest.
-/// - Failure modes: returns argument, parser, cache, IO, or render setup
-///   errors.
-/// - Panics: none.
+/// - requires: arguments identify diagnostics directly, through a digest, or
+///   through parseable input.
+/// - ensures: filters seen diagnostics, records newly surfaced signatures, and
+///   renders the surviving digest.
+/// - fails: returns argument, parser, cache, IO, or render setup errors.
+/// - panics: none.
 fn run_dedupe_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: DedupeArgs = serde_json::from_value(arguments)?;
@@ -751,10 +652,10 @@ fn run_dedupe_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the guidance MCP tool.
 ///
 /// # Contract
-/// - Preconditions: arguments may identify diagnostics for metric recording.
-/// - Postconditions: returns deterministic Markdown guidance from the cache.
-/// - Failure modes: returns argument, parser, cache, or IO errors.
-/// - Panics: none.
+/// - requires: arguments may identify diagnostics for metric recording.
+/// - ensures: returns deterministic Markdown guidance from the cache.
+/// - fails: returns argument, parser, cache, or IO errors.
+/// - panics: none.
 fn run_guidance_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: GuidanceArgs = serde_json::from_value(arguments)?;
@@ -783,12 +684,12 @@ fn run_guidance_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Apply optional dedupe and metric cache updates to diagnostics.
 ///
 /// # Contract
-/// - Preconditions: `diagnostics` are normalized and `project_root` is a UTF-8
+/// - requires: `diagnostics` are normalized and `project_root` is a UTF-8
 ///   project root.
-/// - Postconditions: requested metric and dedupe updates are saved before
-///   returning; when dedupe is false, diagnostics are returned unchanged.
-/// - Failure modes: returns cache loading or saving errors.
-/// - Panics: none.
+/// - ensures: requested metric and dedupe updates are saved before returning;
+///   when dedupe is false, diagnostics are returned unchanged.
+/// - fails: returns cache loading or saving errors.
+/// - panics: none.
 fn apply_optional_cache_updates(
     project_root: &Utf8Path,
     diagnostics: Vec<Diagnostic>,
@@ -806,12 +707,11 @@ fn apply_optional_cache_updates(
 /// path.
 ///
 /// # Contract
-/// - Preconditions: `path` is supplied by the client or omitted to use the
-///   process current directory.
-/// - Postconditions: returns a `Utf8PathBuf` accepted by configuration and
-///   cache APIs.
-/// - Failure modes: returns IO, UTF-8, or invalid path errors.
-/// - Panics: none.
+/// - requires: `path` is supplied by the client or omitted to use the process
+///   current directory.
+/// - ensures: returns a `Utf8PathBuf` accepted by configuration and cache APIs.
+/// - fails: returns IO, UTF-8, or invalid path errors.
+/// - panics: none.
 fn resolve_project_root(path: Option<&str>) -> Result<Utf8PathBuf, AifixError>
 {
     match path {
@@ -830,10 +730,10 @@ fn resolve_project_root(path: Option<&str>) -> Result<Utf8PathBuf, AifixError>
 /// Return the current process directory as UTF-8.
 ///
 /// # Contract
-/// - Preconditions: process current directory is available.
-/// - Postconditions: returns the current directory as a camino UTF-8 path.
-/// - Failure modes: returns IO or UTF-8 errors.
-/// - Panics: none.
+/// - requires: process current directory is available.
+/// - ensures: returns the current directory as a camino UTF-8 path.
+/// - fails: returns IO or UTF-8 errors.
+/// - panics: none.
 fn current_utf8_dir() -> Result<Utf8PathBuf, AifixError>
 {
     let cwd = std::env::current_dir().map_err(AifixError::io)?;
@@ -848,10 +748,10 @@ fn current_utf8_dir() -> Result<Utf8PathBuf, AifixError>
 /// Read inline or path-based tool input.
 ///
 /// # Contract
-/// - Preconditions: exactly one of `input` or `input_path` should be supplied.
-/// - Postconditions: returns the UTF-8 input payload.
-/// - Failure modes: returns argument or filesystem errors.
-/// - Panics: none.
+/// - requires: exactly one of `input` or `input_path` should be supplied.
+/// - ensures: returns the UTF-8 input payload.
+/// - fails: returns argument or filesystem errors.
+/// - panics: none.
 fn read_tool_input(
     input: Option<&str>,
     input_path: Option<&str>,
@@ -875,13 +775,6 @@ fn read_tool_input(
 }
 
 /// Produce a stable synthetic input label for MCP pipeline invocations.
-///
-/// # Contract
-/// - Preconditions: `input_path` is the optional source path argument.
-/// - Postconditions: returns the path when present, otherwise an MCP stdin-like
-///   label.
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn input_label(input_path: Option<&str>) -> String
 {
@@ -891,11 +784,11 @@ fn input_label(input_path: Option<&str>) -> String
 /// Parse diagnostics from any accepted diagnostic-bearing argument shape.
 ///
 /// # Contract
-/// - Preconditions: caller supplies diagnostics, digest, or input.
-/// - Postconditions: returns normalized diagnostics without mutating the source
-///   JSON value.
-/// - Failure modes: returns argument, JSON, or parser errors.
-/// - Panics: none.
+/// - requires: caller supplies diagnostics, digest, or input.
+/// - ensures: returns normalized diagnostics without mutating the source JSON
+///   value.
+/// - fails: returns argument, JSON, or parser errors.
+/// - panics: none.
 fn diagnostics_from_args(
     diagnostics: Option<&Value>,
     digest_value: Option<&Value>,
@@ -925,13 +818,6 @@ fn diagnostics_from_args(
 }
 
 /// Test whether guidance arguments contain diagnostics to record.
-///
-/// # Contract
-/// - Preconditions: arguments are raw optional fields from the guidance call.
-/// - Postconditions: returns true when exactly one diagnostic-bearing source is
-///   present, leaving detailed validation to [`diagnostics_from_args`].
-/// - Failure modes: none.
-/// - Panics: none.
 #[must_use]
 fn has_diagnostic_input(
     diagnostics: Option<&Value>,
@@ -943,13 +829,6 @@ fn has_diagnostic_input(
 }
 
 /// Parse an optional protocol string.
-///
-/// # Contract
-/// - Preconditions: client spellings use the public kebab-case protocol names.
-/// - Postconditions: returns `None` for omitted values and a protocol for valid
-///   values.
-/// - Failure modes: invalid spellings return an argument error.
-/// - Panics: none.
 fn parse_optional_protocol(protocol: Option<&str>) -> Result<Option<Protocol>, AifixError>
 {
     protocol
@@ -959,13 +838,6 @@ fn parse_optional_protocol(protocol: Option<&str>) -> Result<Option<Protocol>, A
 }
 
 /// Parse an optional output format string.
-///
-/// # Contract
-/// - Preconditions: client spellings use the public kebab-case format names.
-/// - Postconditions: returns `None` for omitted values and a format for valid
-///   values.
-/// - Failure modes: invalid spellings return an argument error.
-/// - Panics: none.
 fn parse_optional_format(format: Option<&str>) -> Result<Option<OutputFormat>, AifixError>
 {
     format
@@ -975,25 +847,12 @@ fn parse_optional_format(format: Option<&str>) -> Result<Option<OutputFormat>, A
 }
 
 /// Parse an optional replay mode string.
-///
-/// # Contract
-/// - Preconditions: client spellings use `suggest`, `dry-run`, or `apply`.
-/// - Postconditions: omitted values default to suggest mode.
-/// - Failure modes: invalid spellings return an argument error.
-/// - Panics: none.
 fn parse_replay_mode(mode: Option<&str>) -> Result<ReplayMode, AifixError>
 {
     ReplayMode::from_str(mode.unwrap_or("suggest"))
 }
 
 /// Top-level MCP tool/call parameters.
-///
-/// # Contract
-/// - Preconditions: deserialized from an MCP `tools/call` request.
-/// - Postconditions: preserves the tool name and raw arguments for later typed
-///   deserialization.
-/// - Failure modes: serde reports missing or mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Deserialize)]
 struct ToolCall
 {
@@ -1005,12 +864,6 @@ struct ToolCall
 }
 
 /// Successful tool output before MCP content wrapping.
-///
-/// # Contract
-/// - Preconditions: variants are constructed only after a tool succeeds.
-/// - Postconditions: keeps renderer selection explicit for digest outputs.
-/// - Failure modes: inert until converted to text.
-/// - Panics: none.
 enum ToolOutput
 {
     /// Pre-rendered text output.
@@ -1028,12 +881,6 @@ enum ToolOutput
 }
 
 /// Arguments accepted by `aifix_pipeline`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PipelineArgs
@@ -1059,12 +906,6 @@ struct PipelineArgs
 }
 
 /// Arguments accepted by `aifix_batch`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports missing or mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BatchArgs
@@ -1091,12 +932,6 @@ struct BatchArgs
 }
 
 /// Arguments accepted by `aifix_report_fix`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports missing or mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReportFixArgs
@@ -1114,12 +949,6 @@ struct ReportFixArgs
 }
 
 /// Arguments accepted by `aifix_replay_fixes`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReplayFixesArgs
@@ -1139,12 +968,6 @@ struct ReplayFixesArgs
 }
 
 /// Arguments accepted by `aifix_dedupe`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DedupeArgs
@@ -1166,12 +989,6 @@ struct DedupeArgs
 }
 
 /// Arguments accepted by `aifix_guidance`.
-///
-/// # Contract
-/// - Preconditions: deserialized from MCP JSON.
-/// - Postconditions: field names mirror the public MCP contract.
-/// - Failure modes: serde reports mistyped fields.
-/// - Panics: none.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GuidanceArgs

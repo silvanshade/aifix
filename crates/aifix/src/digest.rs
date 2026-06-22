@@ -30,13 +30,12 @@ use crate::model::Suggestion;
 /// deduplicated diagnostic set.
 ///
 /// # Contract
-/// Preconditions: diagnostics are already normalized into the crate model.
-/// Postconditions: the returned digest contains deduplicated diagnostics,
-/// counts whose total equals the deduplicated length, and groups whose samples
-/// never exceed their represented count or the requested cap.
-/// Failure modes: none.
-/// Panics: debug builds may panic if aggregate count or group sample invariants
-/// are violated after digest construction.
+/// - requires: diagnostics are already normalized into the crate model.
+/// - ensures: the returned digest contains deduplicated diagnostics, counts
+///   whose total equals the deduplicated length, and groups whose samples never
+///   exceed their represented count or the requested cap.
+/// - panics: debug builds may panic if aggregate count or group sample
+///   invariants are violated after digest construction.
 #[must_use]
 #[inline]
 pub fn build_digest(
@@ -85,12 +84,11 @@ pub fn build_digest(
 /// Compute aggregate counts by source and severity.
 ///
 /// # Contract
-/// Preconditions: diagnostics are normalized and may be empty.
-/// Postconditions: returned totals equal `diagnostics.len()` and per-source and
-/// per-severity maps account for every diagnostic exactly once.
-/// Failure modes: none.
-/// Panics: debug builds may panic if per-severity or per-source totals diverge
-/// from the diagnostic slice length.
+/// - requires: diagnostics are normalized and may be empty.
+/// - ensures: returned totals equal `diagnostics.len()` and per-source and
+///   per-severity maps account for every diagnostic exactly once.
+/// - panics: debug builds may panic if per-severity or per-source totals
+///   diverge from the diagnostic slice length.
 #[must_use]
 fn count_diagnostics(diagnostics: &[Diagnostic]) -> Counts
 {
@@ -123,14 +121,13 @@ fn count_diagnostics(diagnostics: &[Diagnostic]) -> Counts
 /// Group diagnostics by the source and structured code/message fallback.
 ///
 /// # Contract
-/// Preconditions: diagnostics are normalized and may be empty;
-/// `max_diagnostics` is a per-group sample cap when present.
-/// Postconditions: each returned group represents at least one diagnostic,
-/// group counts sum to `diagnostics.len()`, and sample lengths are capped by
-/// both the represented count and `max_diagnostics`.
-/// Failure modes: none.
-/// Panics: debug builds may panic if materialized group counts or sample caps
-/// do not match the input diagnostics.
+/// - requires: diagnostics are normalized and may be empty; `max_diagnostics`
+///   is a per-group sample cap when present.
+/// - ensures: each returned group represents at least one diagnostic, group
+///   counts sum to `diagnostics.len()`, and sample lengths are capped by both
+///   the represented count and `max_diagnostics`.
+/// - panics: debug builds may panic if materialized group counts or sample caps
+///   do not match the input diagnostics.
 #[must_use]
 fn group_diagnostics(
     diagnostics: &[Diagnostic],
@@ -195,12 +192,6 @@ fn group_diagnostics(
 }
 
 /// Stable grouping key for digest buckets.
-///
-/// # Contract
-/// Preconditions: built from a normalized diagnostic.
-/// Postconditions: ordering is deterministic for stable group output.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct GroupKey
 {
@@ -213,23 +204,16 @@ struct GroupKey
 }
 
 /// Constructors for stable digest grouping keys.
-///
-/// # Contract
-/// Preconditions: implemented for keys derived from normalized diagnostics.
-/// Postconditions: constructors keep key ordering stable.
-/// Failure modes: constructors have no error return path.
-/// Panics: constructors do not panic.
 impl GroupKey
 {
     /// Construct a grouping key from one diagnostic.
     ///
     /// # Contract
-    /// Preconditions: `diagnostic` is normalized; empty diagnostic codes are
-    /// treated as absent.
-    /// Postconditions: returns a key using the non-empty code when present and
-    /// falling back to message text otherwise.
-    /// Failure modes: none.
-    /// Panics: none.
+    /// - requires: `diagnostic` is normalized; empty diagnostic codes are
+    ///   treated as absent.
+    /// - ensures: returns a key using the non-empty code when present and
+    ///   falling back to message text otherwise.
+    /// - panics: none.
     #[must_use]
     fn from_diagnostic(diagnostic: &Diagnostic) -> Self
     {
@@ -250,13 +234,6 @@ impl GroupKey
 }
 
 /// Mutable group state while accumulating diagnostics.
-///
-/// # Contract
-/// Preconditions: created only while folding diagnostics into a group.
-/// Postconditions: `count` tracks the full group size while `diagnostics` holds
-/// only the capped sample subset.
-/// Failure modes: constructing the value directly has no failure path.
-/// Panics: none.
 #[derive(Debug)]
 struct GroupAccumulator
 {
@@ -275,24 +252,17 @@ struct GroupAccumulator
 }
 
 /// Finalization behavior for accumulated digest groups.
-///
-/// # Contract
-/// Preconditions: implemented for accumulators produced by group folding.
-/// Postconditions: finalizers preserve accumulated counts and samples.
-/// Failure modes: finalizers have no error return path.
-/// Panics: finalizers document their debug-only assertions precisely.
 impl GroupAccumulator
 {
     /// Convert accumulated state into the public group model.
     ///
     /// # Contract
-    /// Preconditions: the accumulator has been created from at least one
-    /// diagnostic and `count` reflects the full represented group size.
-    /// Postconditions: returns a group preserving the accumulated metadata and
-    /// attaching deterministic explanation data.
-    /// Failure modes: none.
-    /// Panics: debug builds may panic if the accumulator represents no
-    /// diagnostics or holds more samples than its count.
+    /// - requires: the accumulator has been created from at least one
+    ///   diagnostic and `count` reflects the full represented group size.
+    /// - ensures: returns a group preserving the accumulated metadata and
+    ///   attaching deterministic explanation data.
+    /// - panics: debug builds may panic if the accumulator represents no
+    ///   diagnostics or holds more samples than its count.
     #[must_use]
     fn into_group(self) -> Group
     {
@@ -318,39 +288,15 @@ impl GroupAccumulator
 }
 
 /// Primary offset basis for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableFingerprintHasher`].
-/// Postconditions: value remains stable across builds.
-/// Failure modes: none.
-/// Panics: none.
 const FNV_OFFSET_PRIMARY: u64 = 0xcbf2_9ce4_8422_2325;
 
 /// Primary prime for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableFingerprintHasher`].
-/// Postconditions: value remains stable across builds.
-/// Failure modes: none.
-/// Panics: none.
 const FNV_PRIME_PRIMARY: u64 = 0x0000_0100_0000_01b3;
 
 /// Secondary offset basis for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableFingerprintHasher`].
-/// Postconditions: value remains stable across builds.
-/// Failure modes: none.
-/// Panics: none.
 const FNV_OFFSET_SECONDARY: u64 = 0x8422_2325_cbf2_9ce4;
 
 /// Secondary prime for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableFingerprintHasher`].
-/// Postconditions: value remains stable across builds.
-/// Failure modes: none.
-/// Panics: none.
 const FNV_PRIME_SECONDARY: u64 = 0x1000_0000_0000_01b3;
 
 /// Normalized bounded semantic fingerprint for exact-repeat removal.
@@ -361,14 +307,13 @@ const FNV_PRIME_SECONDARY: u64 = 0x1000_0000_0000_01b3;
 /// hash-like words with explicit field lengths and separators.
 ///
 /// # Contract
-/// Preconditions: built from a normalized diagnostic whose source and message
-/// have already passed adapter/model validation.
-/// Postconditions: ordering is deterministic and equal fingerprints represent
-/// diagnostics with the same normalized semantic fingerprint over source, code,
-/// severity, message, spans, and suggestions, regardless of preserved raw
-/// payload differences.
-/// Failure modes: constructing the value directly has no recoverable failure.
-/// Panics: none.
+/// - requires: built from a normalized diagnostic whose source and message have
+///   already passed adapter/model validation.
+/// - ensures: ordering is deterministic and equal fingerprints represent
+///   diagnostics with the same normalized semantic fingerprint over source,
+///   code, severity, message, spans, and suggestions, regardless of preserved
+///   raw payload differences.
+/// - panics: none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct DiagnosticFingerprint
 {
@@ -392,12 +337,10 @@ struct DiagnosticFingerprint
 /// putting long raw JSON serializations into ordered map keys.
 ///
 /// # Contract
-/// Preconditions: built from a normalized diagnostic.
-/// Postconditions: equality compares only source, code, severity, message,
-/// spans, and suggestions.
-/// Failure modes: constructing the value directly has no recoverable failure;
-/// allocation may abort through the global allocator.
-/// Panics: none.
+/// - requires: built from a normalized diagnostic.
+/// - ensures: equality compares only source, code, severity, message, spans,
+///   and suggestions.
+/// - panics: none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiagnosticIdentity
 {
@@ -416,26 +359,16 @@ struct DiagnosticIdentity
 }
 
 /// Constructors and fingerprinting for exact diagnostic identities.
-///
-/// # Contract
-/// Preconditions: implemented for identities derived from normalized
-/// diagnostics.
-/// Postconditions: helpers never inspect or serialize raw payloads.
-/// Failure modes: constructors have no error return path; allocation may abort
-/// through the global allocator.
-/// Panics: constructors do not panic.
 impl DiagnosticIdentity
 {
     /// Construct an exact semantic identity from one diagnostic.
     ///
     /// # Contract
-    /// Preconditions: `diagnostic` is normalized and may carry an arbitrary raw
-    /// JSON payload.
-    /// Postconditions: returns source, code, severity, message, spans, and
-    /// suggestions while excluding [`Diagnostic::raw`].
-    /// Failure modes: none are returned; allocation may abort through the
-    /// global allocator.
-    /// Panics: none.
+    /// - requires: `diagnostic` is normalized and may carry an arbitrary raw
+    ///   JSON payload.
+    /// - ensures: returns source, code, severity, message, spans, and
+    ///   suggestions while excluding [`Diagnostic::raw`].
+    /// - panics: none.
     #[must_use]
     fn from_diagnostic(diagnostic: &Diagnostic) -> Self
     {
@@ -452,11 +385,10 @@ impl DiagnosticIdentity
     /// Compute the bounded map key for this exact semantic identity.
     ///
     /// # Contract
-    /// Preconditions: `self` came from a normalized diagnostic.
-    /// Postconditions: returns a deterministic bounded key over this identity's
-    /// semantic fields.
-    /// Failure modes: none.
-    /// Panics: none.
+    /// - requires: `self` came from a normalized diagnostic.
+    /// - ensures: returns a deterministic bounded key over this identity's
+    ///   semantic fields.
+    /// - panics: none.
     #[must_use]
     fn fingerprint(&self) -> DiagnosticFingerprint
     {
@@ -480,12 +412,11 @@ impl DiagnosticIdentity
 /// Stable allocation-free hasher for semantic diagnostic identity fields.
 ///
 /// # Contract
-/// Preconditions: callers feed fields in a fixed schema order with explicit
-/// lengths before variable text.
-/// Postconditions: equal input streams produce equal hash state on every
-/// supported platform; raw JSON payloads are not accepted by this helper.
-/// Failure modes: none.
-/// Panics: none.
+/// - requires: callers feed fields in a fixed schema order with explicit
+///   lengths before variable text.
+/// - ensures: equal input streams produce equal hash state on every supported
+///   platform; raw JSON payloads are not accepted by this helper.
+/// - panics: none.
 #[derive(Debug, Clone, Copy)]
 struct StableFingerprintHasher
 {
@@ -498,23 +429,9 @@ struct StableFingerprintHasher
 }
 
 /// Stable fingerprint hashing operations.
-///
-/// # Contract
-/// Preconditions: methods are called in the schema order encoded by
-/// [`DiagnosticIdentity::fingerprint`].
-/// Postconditions: methods append tagged, length-delimited field data to the
-/// stable hash stream without allocation.
-/// Failure modes: none.
-/// Panics: none.
 impl StableFingerprintHasher
 {
     /// Construct an empty stable fingerprint hasher.
-    ///
-    /// # Contract
-    /// Preconditions: none.
-    /// Postconditions: returns the documented offset-basis state.
-    /// Failure modes: none.
-    /// Panics: none.
     #[must_use]
     fn new() -> Self
     {
@@ -528,11 +445,10 @@ impl StableFingerprintHasher
     /// Finish hashing into a bounded diagnostic fingerprint key.
     ///
     /// # Contract
-    /// Preconditions: all semantic fields have already been written.
-    /// Postconditions: returns a key containing only fixed-size hash and count
-    /// fields.
-    /// Failure modes: none.
-    /// Panics: none.
+    /// - requires: all semantic fields have already been written.
+    /// - ensures: returns a key containing only fixed-size hash and count
+    ///   fields.
+    /// - panics: none.
     #[must_use]
     fn into_fingerprint(
         self,
@@ -550,13 +466,6 @@ impl StableFingerprintHasher
     }
 
     /// Write a single tagged byte into both hash states.
-    ///
-    /// # Contract
-    /// Preconditions: `byte` is part of the normalized fingerprint stream.
-    /// Postconditions: hash states and normalized byte count advance
-    /// deterministically.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_byte(
         &mut self,
         byte: u8,
@@ -575,14 +484,6 @@ impl StableFingerprintHasher
     /// Values that cannot fit in `u64` on wider-than-64-bit targets fold as
     /// `u64::MAX`, preserving the helper's infallible contract while keeping
     /// the hash stream stable for all representable Rust targets.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a field length or count from normalized model
-    /// data.
-    /// Postconditions: exactly eight bytes are folded into the hash stream on
-    /// every platform.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_usize(
         &mut self,
         value: usize,
@@ -595,12 +496,6 @@ impl StableFingerprintHasher
     }
 
     /// Write an optional one-based coordinate.
-    ///
-    /// # Contract
-    /// Preconditions: coordinates came from normalized model spans.
-    /// Postconditions: absence and presence are distinct in the hash stream.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_optional_u32(
         &mut self,
         value: Option<u32>,
@@ -618,12 +513,6 @@ impl StableFingerprintHasher
     }
 
     /// Write UTF-8 text with a length delimiter.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a normalized UTF-8 semantic field.
-    /// Postconditions: text length and bytes are folded deterministically.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_str(
         &mut self,
         value: &str,
@@ -636,12 +525,6 @@ impl StableFingerprintHasher
     }
 
     /// Write optional UTF-8 text with a presence marker.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is absent or a normalized UTF-8 semantic field.
-    /// Postconditions: `None` and `Some("")` remain distinct.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_optional_str(
         &mut self,
         value: Option<&str>,
@@ -657,12 +540,6 @@ impl StableFingerprintHasher
     }
 
     /// Write normalized severity as a compact discriminator.
-    ///
-    /// # Contract
-    /// Preconditions: `severity` is a valid model severity.
-    /// Postconditions: the four severity variants have stable distinct bytes.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_severity(
         &mut self,
         severity: Severity,
@@ -678,13 +555,6 @@ impl StableFingerprintHasher
     }
 
     /// Write a normalized span.
-    ///
-    /// # Contract
-    /// Preconditions: `span` was produced by adapter/model normalization.
-    /// Postconditions: file and all optional coordinates are folded in stable
-    /// field order.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_span(
         &mut self,
         span: &Span,
@@ -698,13 +568,6 @@ impl StableFingerprintHasher
     }
 
     /// Write a normalized suggestion.
-    ///
-    /// # Contract
-    /// Preconditions: `suggestion` was produced by adapter/model normalization.
-    /// Postconditions: message, replacement, and optional span are folded in
-    /// stable field order.
-    /// Failure modes: none.
-    /// Panics: none.
     fn write_suggestion(
         &mut self,
         suggestion: &Suggestion,
@@ -723,13 +586,6 @@ impl StableFingerprintHasher
 }
 
 /// Unit coverage for digest semantic deduplication.
-///
-/// # Contract
-/// Preconditions: compiled only for crate tests.
-/// Postconditions: exercises private digest helpers without exposing test-only
-/// API.
-/// Failure modes: test failures return descriptive errors.
-/// Panics: none.
 #[cfg(test)]
 mod tests
 {
@@ -739,12 +595,6 @@ mod tests
     use crate::model::Protocol;
 
     /// Converts a test invariant into a fallible result.
-    ///
-    /// # Contract
-    /// Preconditions: `message` describes the false condition.
-    /// Postconditions: returns `Ok(())` when `condition` is true.
-    /// Failure modes: false conditions return `message` as the test error.
-    /// Panics: none.
     fn require(
         condition: bool,
         message: &'static str,
@@ -758,14 +608,6 @@ mod tests
     }
 
     /// Builds one diagnostic that differs only by raw payload across calls.
-    ///
-    /// # Contract
-    /// Preconditions: `raw_label` is the test marker to preserve in raw JSON.
-    /// Postconditions: returns a normalized diagnostic with identical semantic
-    /// fields for every label value.
-    /// Failure modes: none are returned; allocation may abort through the
-    /// global allocator.
-    /// Panics: none.
     fn diagnostic_with_raw(raw_label: &'static str) -> Diagnostic
     {
         Diagnostic::new(
@@ -798,14 +640,6 @@ mod tests
     }
 
     /// Verifies raw payload differences do not defeat semantic deduplication.
-    ///
-    /// # Contract
-    /// Preconditions: digest construction accepts normalized diagnostics with
-    /// arbitrary raw payloads.
-    /// Postconditions: diagnostics that differ only by raw JSON collapse to one
-    /// deduplicated digest entry.
-    /// Failure modes: digest invariant failures return descriptive test errors.
-    /// Panics: none.
     #[test]
     fn digest_deduplicates_without_raw_payload_identity() -> Result<(), String>
     {
@@ -832,14 +666,6 @@ mod tests
     }
 
     /// Verifies semantic field differences remain distinct after hashing.
-    ///
-    /// # Contract
-    /// Preconditions: digest construction receives diagnostics that differ in
-    /// normalized message text.
-    /// Postconditions: semantic differences are retained as separate
-    /// deduplicated digest entries.
-    /// Failure modes: digest invariant failures return descriptive test errors.
-    /// Panics: none.
     #[test]
     fn digest_keeps_distinct_semantic_messages() -> Result<(), String>
     {

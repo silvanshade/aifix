@@ -19,51 +19,21 @@ use crate::model::Span;
 use crate::model::Suggestion;
 
 /// Version number embedded in every diagnostic signature string.
-///
-/// # Contract
-/// Preconditions: callers use this constant only for the signature schema in
-/// this module. Postconditions: generated strings begin with `aifix-v1`.
-/// Failure modes: none. Panics: none.
 pub const SIGNATURE_SCHEMA_VERSION: u8 = 1;
 
 /// Prefix used for serialized schema-versioned diagnostic signatures.
-///
-/// # Contract
-/// Preconditions: this prefix is paired with [`SIGNATURE_SCHEMA_VERSION`].
-/// Postconditions: parsed and rendered signatures use the same literal prefix.
-/// Failure modes: none. Panics: none.
 pub const SIGNATURE_PREFIX: &str = "aifix-v1";
 
 /// Primary offset basis for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableSignatureHasher`].
-/// Postconditions: value remains stable across builds. Failure modes: none.
-/// Panics: none.
 const FNV_OFFSET_PRIMARY: u64 = 0xcbf2_9ce4_8422_2325;
 
 /// Primary prime for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableSignatureHasher`].
-/// Postconditions: value remains stable across builds. Failure modes: none.
-/// Panics: none.
 const FNV_PRIME_PRIMARY: u64 = 0x0000_0100_0000_01b3;
 
 /// Secondary offset basis for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableSignatureHasher`].
-/// Postconditions: value remains stable across builds. Failure modes: none.
-/// Panics: none.
 const FNV_OFFSET_SECONDARY: u64 = 0x8422_2325_cbf2_9ce4;
 
 /// Secondary prime for the stable semantic fingerprint hash.
-///
-/// # Contract
-/// Preconditions: constant is used only by [`StableSignatureHasher`].
-/// Postconditions: value remains stable across builds. Failure modes: none.
-/// Panics: none.
 const FNV_PRIME_SECONDARY: u64 = 0x1000_0000_0000_01b3;
 
 /// Public stable identity for one normalized diagnostic.
@@ -74,11 +44,12 @@ const FNV_PRIME_SECONDARY: u64 = 0x1000_0000_0000_01b3;
 /// inspected.
 ///
 /// # Contract
-/// Preconditions: values are created with
-/// [`DiagnosticSignature::from_diagnostic`] or [`FromStr`]. Postconditions:
-/// display and serde use the canonical stable string form. Failure modes:
-/// parsing rejects malformed prefixes, word counts, or non-hex words with
-/// [`AifixError::InvalidArgument`]. Panics: none.
+/// - requires: values are created with [`DiagnosticSignature::from_diagnostic`]
+///   or [`FromStr`].
+/// - ensures: display and serde use the canonical stable string form.
+/// - fails: parsing rejects malformed prefixes, segment counts, or non-hex
+///   words with [`AifixError::InvalidArgument`].
+/// - panics: none.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DiagnosticSignature
@@ -94,10 +65,11 @@ impl DiagnosticSignature
     /// Construct a stable signature from one normalized diagnostic.
     ///
     /// # Contract
-    /// Preconditions: `diagnostic` was normalized by an adapter or caller and
-    /// may carry any raw JSON payload. Postconditions: returns a deterministic
-    /// two-word fingerprint over semantic fields only. Failure modes: none.
-    /// Panics: none.
+    /// - requires: `diagnostic` was normalized by an adapter or caller and may
+    ///   carry any raw JSON payload.
+    /// - ensures: returns a deterministic two-word fingerprint over semantic
+    ///   fields only.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn from_diagnostic(diagnostic: &Diagnostic) -> Self
@@ -119,11 +91,6 @@ impl DiagnosticSignature
     }
 
     /// Construct a signature directly from already-validated hash words.
-    ///
-    /// # Contract
-    /// Preconditions: `primary` and `secondary` came from this module's stable
-    /// hashing scheme or from a validated external cache key. Postconditions:
-    /// stores both words unchanged. Failure modes: none. Panics: none.
     #[must_use]
     #[inline]
     pub const fn from_words(
@@ -135,11 +102,6 @@ impl DiagnosticSignature
     }
 
     /// Return the primary fingerprint word.
-    ///
-    /// # Contract
-    /// Preconditions: `self` is a valid signature. Postconditions: returns the
-    /// first fixed-size word used by the canonical string. Failure modes: none.
-    /// Panics: none.
     #[must_use]
     #[inline]
     pub const fn primary(self) -> u64
@@ -148,11 +110,6 @@ impl DiagnosticSignature
     }
 
     /// Return the secondary fingerprint word.
-    ///
-    /// # Contract
-    /// Preconditions: `self` is a valid signature. Postconditions: returns the
-    /// second fixed-size word used by the canonical string. Failure modes:
-    /// none. Panics: none.
     #[must_use]
     #[inline]
     pub const fn secondary(self) -> u64
@@ -163,10 +120,10 @@ impl DiagnosticSignature
     /// Render the canonical cache key string.
     ///
     /// # Contract
-    /// Preconditions: `self` is a valid signature. Postconditions: returns the
-    /// exact `aifix-v1-<16 hex>-<16 hex>` spelling accepted by [`FromStr`].
-    /// Failure modes: allocation may abort through the global allocator; no
-    /// recoverable error is returned. Panics: none.
+    /// - requires: `self` is a valid signature.
+    /// - ensures: returns the exact `aifix-v1-<16 hex>-<16 hex>` spelling
+    ///   accepted by [`FromStr`].
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn as_key(self) -> String
@@ -181,10 +138,11 @@ impl DiagnosticSignature
     /// Validate and canonicalize a signature string.
     ///
     /// # Contract
-    /// Preconditions: `value` is caller-supplied cache or MCP text.
-    /// Postconditions: returns the canonical lowercase string for a valid
-    /// signature. Failure modes: returns [`AifixError::InvalidArgument`] when
-    /// the input is malformed. Panics: none.
+    /// - requires: `value` is caller-supplied cache or MCP text.
+    /// - ensures: returns the canonical lowercase string for a valid signature.
+    /// - fails: returns [`AifixError::InvalidArgument`] when the input is
+    ///   malformed.
+    /// - panics: none.
     ///
     /// # Errors
     /// Returns [`AifixError::InvalidArgument`] when `value` is not a valid
@@ -199,12 +157,6 @@ impl DiagnosticSignature
 impl fmt::Display for DiagnosticSignature
 {
     /// Format the signature using the canonical cache key string.
-    ///
-    /// # Contract
-    /// Preconditions: `f` is writable by the formatting runtime.
-    /// Postconditions: writes the same spelling returned by
-    /// [`DiagnosticSignature::as_key`]. Failure modes: returns the
-    /// formatter error if writing fails. Panics: none.
     ///
     /// # Errors
     /// Returns formatter errors when writing the canonical signature fails.
@@ -230,11 +182,12 @@ impl FromStr for DiagnosticSignature
     /// Parse a canonical or uppercase-hex diagnostic signature string.
     ///
     /// # Contract
-    /// Preconditions: `s` is caller-supplied cache or MCP text. Postconditions:
-    /// returns a signature with the two parsed words for valid `aifix-v1`
-    /// input. Failure modes: returns [`AifixError::InvalidArgument`] for
-    /// malformed prefixes, segment lengths, segment counts, or non-hex
-    /// words. Panics: none.
+    /// - requires: `s` is caller-supplied cache or MCP text.
+    /// - ensures: returns a signature with the two parsed words for valid
+    ///   `aifix-v1` input.
+    /// - fails: returns [`AifixError::InvalidArgument`] for malformed prefixes,
+    ///   segment lengths, segment counts, or non-hex words.
+    /// - panics: none.
     ///
     /// # Errors
     /// Returns [`AifixError::InvalidArgument`] for malformed prefixes, segment
@@ -290,9 +243,10 @@ impl Serialize for DiagnosticSignature
     /// Serialize the signature as its canonical cache key string.
     ///
     /// # Contract
-    /// Preconditions: `serializer` accepts string values. Postconditions: emits
-    /// the canonical signature string. Failure modes: returns serializer
-    /// errors. Panics: none.
+    /// - requires: `serializer` accepts string values.
+    /// - ensures: emits the canonical signature string.
+    /// - fails: returns serializer errors.
+    /// - panics: none.
     ///
     /// # Errors
     /// Returns serializer errors when the canonical signature string cannot be
@@ -314,9 +268,10 @@ impl<'de> Deserialize<'de> for DiagnosticSignature
     /// Deserialize a validated diagnostic signature string.
     ///
     /// # Contract
-    /// Preconditions: input contains a string. Postconditions: returns the
-    /// parsed signature. Failure modes: reports invalid strings through serde's
-    /// custom error mechanism. Panics: none.
+    /// - requires: input contains a string.
+    /// - ensures: returns the parsed signature.
+    /// - fails: reports invalid strings through serde's custom error mechanism.
+    /// - panics: none.
     ///
     /// # Errors
     /// Returns deserializer errors for non-string input and custom serde errors
@@ -332,11 +287,6 @@ impl<'de> Deserialize<'de> for DiagnosticSignature
 }
 
 /// Return an invalid-argument error for malformed signature text.
-///
-/// # Contract
-/// Preconditions: `value` is the rejected caller input. Postconditions: returns
-/// a typed error that describes the required signature shape. Failure modes:
-/// allocation may abort through the global allocator. Panics: none.
 #[must_use]
 fn invalid_signature(value: &str) -> AifixError
 {
@@ -347,10 +297,6 @@ fn invalid_signature(value: &str) -> AifixError
 }
 
 /// Return whether one byte is an ASCII hexadecimal digit.
-///
-/// # Contract
-/// Preconditions: `byte` is a byte from caller input. Postconditions: returns
-/// true only for `0-9`, `a-f`, or `A-F`. Failure modes: none. Panics: none.
 #[must_use]
 fn is_ascii_hex(byte: u8) -> bool
 {
@@ -360,10 +306,10 @@ fn is_ascii_hex(byte: u8) -> bool
 /// Stable allocation-free hasher for semantic diagnostic fields.
 ///
 /// # Contract
-/// Preconditions: callers feed fields in the fixed schema order encoded by
-/// [`DiagnosticSignature::from_diagnostic`]. Postconditions: equal semantic
-/// streams produce equal hash words across platforms. Failure modes: none.
-/// Panics: none.
+/// - requires: callers feed fields in the fixed schema order encoded by
+///   [`DiagnosticSignature::from_diagnostic`].
+/// - ensures: equal semantic streams produce equal hash words across platforms.
+/// - panics: none.
 #[derive(Debug, Clone, Copy)]
 struct StableSignatureHasher
 {
@@ -376,10 +322,6 @@ struct StableSignatureHasher
 impl StableSignatureHasher
 {
     /// Construct an empty stable signature hasher.
-    ///
-    /// # Contract
-    /// Preconditions: none. Postconditions: returns the documented offset-basis
-    /// states. Failure modes: none. Panics: none.
     #[must_use]
     fn new() -> Self
     {
@@ -390,11 +332,6 @@ impl StableSignatureHasher
     }
 
     /// Finish hashing into a diagnostic signature.
-    ///
-    /// # Contract
-    /// Preconditions: all semantic fields have already been written.
-    /// Postconditions: returns a two-word signature for the accumulated stream.
-    /// Failure modes: none. Panics: none.
     #[must_use]
     fn into_signature(self) -> DiagnosticSignature
     {
@@ -405,11 +342,6 @@ impl StableSignatureHasher
     }
 
     /// Write a single byte into both hash states.
-    ///
-    /// # Contract
-    /// Preconditions: `byte` is part of the normalized fingerprint stream.
-    /// Postconditions: hash states advance deterministically. Failure modes:
-    /// none. Panics: none.
     fn write_byte(
         &mut self,
         byte: u8,
@@ -423,11 +355,6 @@ impl StableSignatureHasher
     }
 
     /// Write a native length in portable little-endian form.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a field length or count. Postconditions: folds
-    /// exactly eight bytes on every platform, saturating unreachable wider
-    /// targets to `u64::MAX`. Failure modes: none. Panics: none.
     fn write_usize(
         &mut self,
         value: usize,
@@ -440,11 +367,6 @@ impl StableSignatureHasher
     }
 
     /// Write an optional one-based coordinate.
-    ///
-    /// # Contract
-    /// Preconditions: `value` came from a normalized span. Postconditions:
-    /// absence and presence are distinct in the hash stream. Failure modes:
-    /// none. Panics: none.
     fn write_optional_u32(
         &mut self,
         value: Option<u32>,
@@ -462,11 +384,6 @@ impl StableSignatureHasher
     }
 
     /// Write UTF-8 text with a length delimiter.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is a normalized semantic field. Postconditions:
-    /// length and bytes are folded without allocating. Failure modes: none.
-    /// Panics: none.
     fn write_str(
         &mut self,
         value: &str,
@@ -479,11 +396,6 @@ impl StableSignatureHasher
     }
 
     /// Write optional UTF-8 text with a presence marker.
-    ///
-    /// # Contract
-    /// Preconditions: `value` is absent or a normalized semantic field.
-    /// Postconditions: `None` and `Some("")` remain distinct. Failure modes:
-    /// none. Panics: none.
     fn write_optional_str(
         &mut self,
         value: Option<&str>,
@@ -499,11 +411,6 @@ impl StableSignatureHasher
     }
 
     /// Write normalized severity as a compact discriminator.
-    ///
-    /// # Contract
-    /// Preconditions: `severity` is a valid model severity. Postconditions: the
-    /// supported severity variants have stable distinct bytes. Failure modes:
-    /// none. Panics: none.
     fn write_severity(
         &mut self,
         severity: Severity,
@@ -519,11 +426,6 @@ impl StableSignatureHasher
     }
 
     /// Write a normalized source span.
-    ///
-    /// # Contract
-    /// Preconditions: `span` was produced by adapter/model normalization.
-    /// Postconditions: file and optional coordinates are folded in stable field
-    /// order. Failure modes: none. Panics: none.
     fn write_span(
         &mut self,
         span: &Span,
@@ -537,11 +439,6 @@ impl StableSignatureHasher
     }
 
     /// Write a normalized suggestion.
-    ///
-    /// # Contract
-    /// Preconditions: `suggestion` was produced by adapter/model normalization.
-    /// Postconditions: message, replacement, and optional span are folded in
-    /// stable field order. Failure modes: none. Panics: none.
     fn write_suggestion(
         &mut self,
         suggestion: &Suggestion,

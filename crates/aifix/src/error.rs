@@ -12,25 +12,16 @@ use camino::Utf8PathBuf;
 use thiserror::Error;
 
 /// Convenient result type for `aifix` operations.
-///
-/// # Contract
-/// - Preconditions: callers choose `T` and, optionally, a domain-specific error
-///   type.
-/// - Postconditions: aliases `core::result::Result<T, E>` with [`AifixError`]
-///   as the default error.
-/// - Failure modes: none; this is a type alias.
-/// - Panics: none.
 pub type Result<T, E = AifixError> = core::result::Result<T, E>;
 
-/// Failure modes produced by `aifix`.
+/// Typed errors produced by `aifix`.
 ///
 /// # Contract
-/// - Preconditions: variants preserve the boundary-specific error context
-///   supplied by callers.
-/// - Postconditions: formatting exposes the category while source data remains
-///   typed.
-/// - Failure modes: none; values are inert until returned or displayed.
-/// - Panics: none.
+/// - requires: variants preserve the boundary-specific error context supplied
+///   by callers.
+/// - ensures: formatting exposes the category while source data remains typed.
+/// - fails: none; values are inert until returned or displayed.
+/// - panics: none.
 #[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum AifixError
@@ -77,12 +68,6 @@ pub enum AifixError
 impl AifixError
 {
     /// Construct an IO error with no path context.
-    ///
-    /// # Contract
-    /// - Preconditions: `source` is the original IO failure.
-    /// - Postconditions: returns [`AifixError::Io`] with no path attached.
-    /// - Failure modes: none; construction is infallible.
-    /// - Panics: none.
     #[must_use]
     #[inline]
     pub fn io(source: io::Error) -> Self
@@ -93,10 +78,10 @@ impl AifixError
     /// Construct an IO error with UTF-8 path context.
     ///
     /// # Contract
-    /// - Preconditions: `path` identifies the operation that produced `source`.
-    /// - Postconditions: returns [`AifixError::Io`] with `path` preserved.
-    /// - Failure modes: none; construction is infallible.
-    /// - Panics: none.
+    /// - requires: `path` identifies the operation that produced `source`.
+    /// - ensures: returns [`AifixError::Io`] with `path` preserved.
+    /// - fails: none; construction is infallible.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn io_path(
@@ -113,11 +98,11 @@ impl AifixError
     /// Construct a configuration error from displayable text.
     ///
     /// # Contract
-    /// - Preconditions: `message` describes the configuration failure.
-    /// - Postconditions: stores `message.into()` in [`AifixError::Config`].
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - requires: `message` describes the configuration failure.
+    /// - ensures: stores `message.into()` in [`AifixError::Config`].
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn config<Message>(message: Message) -> Self
@@ -130,12 +115,12 @@ impl AifixError
     /// Construct a process error from displayable text.
     ///
     /// # Contract
-    /// - Preconditions: `message` describes process setup, execution, or output
+    /// - requires: `message` describes process setup, execution, or output
     ///   handling.
-    /// - Postconditions: stores `message.into()` in [`AifixError::Process`].
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - ensures: stores `message.into()` in [`AifixError::Process`].
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn process<Message>(message: Message) -> Self
@@ -148,14 +133,14 @@ impl AifixError
     /// Construct a process error for captured output that exceeds a byte cap.
     ///
     /// # Contract
-    /// - Preconditions: `stream` names the stream being captured, `command`
-    ///   names the executable boundary, and `limit` is the configured
-    ///   per-stream byte limit.
-    /// - Postconditions: returns [`AifixError::Process`] with a stable message
-    ///   that identifies the stream, command, and limit.
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - requires: `stream` names the stream being captured, `command` names
+    ///   the executable boundary, and `limit` is the configured per-stream byte
+    ///   limit.
+    /// - ensures: returns [`AifixError::Process`] with a stable message that
+    ///   identifies the stream, command, and limit.
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn output_limit(
@@ -172,11 +157,11 @@ impl AifixError
     /// Construct a parser error from displayable text.
     ///
     /// # Contract
-    /// - Preconditions: `message` describes the rejected diagnostic input.
-    /// - Postconditions: stores `message.into()` in [`AifixError::Parser`].
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - requires: `message` describes the rejected diagnostic input.
+    /// - ensures: stores `message.into()` in [`AifixError::Parser`].
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn parser<Message>(message: Message) -> Self
@@ -189,11 +174,11 @@ impl AifixError
     /// Construct a UTF-8 conversion error from displayable text.
     ///
     /// # Contract
-    /// - Preconditions: `message` describes the invalid byte sequence boundary.
-    /// - Postconditions: stores `message.into()` in [`AifixError::Utf8`].
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - requires: `message` describes the invalid byte sequence boundary.
+    /// - ensures: stores `message.into()` in [`AifixError::Utf8`].
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn utf8<Message>(message: Message) -> Self
@@ -206,13 +191,12 @@ impl AifixError
     /// Construct an invalid-argument error from displayable text.
     ///
     /// # Contract
-    /// - Preconditions: `message` describes the unsupported or inconsistent
+    /// - requires: `message` describes the unsupported or inconsistent
     ///   argument.
-    /// - Postconditions: stores `message.into()` in
-    ///   [`AifixError::InvalidArgument`].
-    /// - Failure modes: allocation may abort through the global allocator; no
+    /// - ensures: stores `message.into()` in [`AifixError::InvalidArgument`].
+    /// - fails: allocation may abort through the global allocator; no
     ///   recoverable error is returned.
-    /// - Panics: none.
+    /// - panics: none.
     #[must_use]
     #[inline]
     pub fn invalid_argument<Message>(message: Message) -> Self

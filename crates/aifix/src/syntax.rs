@@ -50,11 +50,6 @@ pub enum SyntaxContextResult
 impl SyntaxContextResult
 {
     /// Return the evidence when present.
-    ///
-    /// # Contract
-    /// Preconditions: `self` is any syntax context result. Postconditions:
-    /// returns `Some` only for evidence results. Failure modes: none. Panics:
-    /// none.
     #[must_use]
     #[inline]
     pub const fn evidence(&self) -> Option<&SyntaxContextEvidence>
@@ -66,11 +61,6 @@ impl SyntaxContextResult
     }
 
     /// Return the stable no-match reason when present.
-    ///
-    /// # Contract
-    /// Preconditions: `self` is any syntax context result. Postconditions:
-    /// returns `Some` only for no-match results. Failure modes: none. Panics:
-    /// none.
     #[must_use]
     #[inline]
     pub fn reason(&self) -> Option<&str>
@@ -149,11 +139,13 @@ pub struct LeadingWhitespaceSignal
 /// Compute Rust syntax context for a diagnostic primary span.
 ///
 /// # Contract
-/// Preconditions: `project_root` is a UTF-8 project directory and `diagnostic`
-/// is normalized. Postconditions: only `.rs` paths are parsed; unsupported or
-/// unavailable source returns a stable no-match reason instead of an error.
-/// Failure modes: unsupported or unavailable source returns stable no-match
-/// reasons; parser setup remains typed. Panics: none.
+/// - requires: `project_root` is a UTF-8 project directory and `diagnostic` is
+///   normalized.
+/// - ensures: only `.rs` paths are parsed; unsupported or unavailable source
+///   returns a stable no-match reason instead of an error.
+/// - fails: unsupported or unavailable source returns stable no-match reasons;
+///   parser setup remains typed.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns [`AifixError::Config`] when tree-sitter Rust parser setup fails.
