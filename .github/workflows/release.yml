@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (for example, v1.0.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  template:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - &git-checkout
+        name: git checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - &install-rust-tools
+        name: install rust tools
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: nightly-2026-05-27
+          targets: ${{ matrix.target }}
+
+      - &resolve-release-tag
+        name: resolve tag
+        shell: bash
+        run: |
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "Unable to resolve a release tag. Push a v* tag, publish a release, or pass workflow_dispatch input 'tag'." >&2
+            exit 1
+          fi
+          echo "Resolved release tag: $RELEASE_TAG"
+
+      - &build-unix-aifix
+        name: build unix
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: cargo build --locked --profile dist --target ${{ matrix.target }} --bin aifix
+
+      - &build-windows-aifix
+        name: build windows
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: cargo build --locked --profile dist --target ${{ matrix.target }} --bin aifix
+
+      - &package-unix-archive
+        name: package unix
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="aifix-${RELEASE_TAG}-${TARGET}"
+          archive="${root}.tar.gz"
+          stage="${RUNNER_TEMP}/${root}"
+
+          mkdir -p dist "$stage"
+          cp "target/${TARGET}/dist/aifix" "$stage/aifix"
+          tar -C "$RUNNER_TEMP" -czf "dist/${archive}" "$root"
+          (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+
+      - &package-windows-archive
+        name: package windows
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "aifix-$env:RELEASE_TAG-$env:TARGET"
+          $archive = "$root.zip"
+          $stage = Join-Path $env:RUNNER_TEMP $root
+
+          New-Item -ItemType Directory -Force -Path dist, $stage | Out-Null
+          Copy-Item "target\$env:TARGET\dist\aifix.exe" (Join-Path $stage "aifix.exe")
+          Compress-Archive -Path $stage -DestinationPath "dist\$archive" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "dist\$archive").Hash.ToLowerInvariant()
+          Set-Content -Path "dist\$archive.sha256" -Value "$hash  $archive"
+
+      - &ensure-github-release-exists
+        name: ensure release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes "Release $RELEASE_TAG" \
+              || gh release view "$RELEASE_TAG" >/dev/null
+          fi
+
+      - &upload-unix-release-artifacts
+        name: upload unix artifacts
+        if: matrix.shell == 'bash'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+
+      - &upload-windows-release-artifacts
+        name: upload windows artifacts
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem -Path dist -File | ForEach-Object { $_.FullName }
+          gh release upload $env:RELEASE_TAG $files --clobber
+
+  release:
+    permissions:
+      contents: write
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+      TARGET: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            shell: bash
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            shell: bash
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            shell: bash
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            shell: pwsh
+
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *resolve-release-tag
+      - *build-unix-aifix
+      - *build-windows-aifix
+      - *package-unix-archive
+      - *package-windows-archive
+      - *ensure-github-release-exists
+      - *upload-unix-release-artifacts
+      - *upload-windows-release-artifacts

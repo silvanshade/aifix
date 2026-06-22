@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MISE_ENV: ci
+  MISE_ENABLE_TOOLS: ""
+  RUSTUP_TOOLCHAIN: nightly-2026-05-27
+  CI_VERSION_MISE: 2026.6.0
+
+jobs:
+  template:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - &git-checkout
+        name: git checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - &install-rust-tools
+        name: install rust tools
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          components: clippy, llvm-tools-preview, rustfmt, rust-src
+      - &cargo-binstall
+        name: install rust tools
+        uses: taiki-e/install-action@cde8c9e634f4a17bc06b61413ac0ef75450eac46
+        with:
+          tool: cargo-binstall
+      - &install-mise-tools
+        name: install mise tools
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151
+        with:
+          version: ${{ env.CI_VERSION_MISE }}
+          cache: true
+          experimental: true
+
+  cargo-build:
+    name: cargo build
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *install-mise-tools
+      - name: mise run cargo:build
+        run: mise run cargo:build
+
+  docs-gates:
+    name: docs gates
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *cargo-binstall
+      - name: enable mise tools
+        run: |
+          tools=()
+          tools+=("cargo:b3sum")
+          tools+=("cargo:nu")
+          IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
+      - *install-mise-tools
+      - name: mise run docs:conflict-markers
+        run: mise run docs:conflict-markers
+      - name: mise run docs:manifest-drift
+        run: mise run docs:manifest-drift
+
+  project-lint:
+    name: project lint
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *cargo-binstall
+      - name: enable mise tools
+        run: |
+          tools=()
+          tools+=("cargo:nu")
+          tools+=("cargo:rumdl")
+          tools+=("cargo:typos-cli")
+          tools+=("cargo:zizmor")
+          tools+=("github:numtide/treefmt")
+          tools+=("github:tombi-toml/tombi")
+          IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
+      - *install-mise-tools
+      - name: install wrkflw
+        uses: taiki-e/install-action@cde8c9e634f4a17bc06b61413ac0ef75450eac46
+        with:
+          tool: wrkflw@0.8.0
+      - name: mise run treefmt:check
+        run: mise run treefmt:check
+      - name: wrkflw validate
+        run: wrkflw validate
+
+  cargo-clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *install-mise-tools
+      - name: mise run cargo:clippy
+        run: mise run cargo:clippy
+
+  cargo-nextest:
+    name: cargo nextest
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *cargo-binstall
+      - name: enable mise tools
+        run: |
+          tools=()
+          tools+=("cargo:cargo-nextest")
+          IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
+      - *install-mise-tools
+      - name: mise run cargo:nextest
+        run: mise run cargo:nextest
