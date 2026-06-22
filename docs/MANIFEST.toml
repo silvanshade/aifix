@@ -33,3 +33,11 @@ b3 = "f59f586da3a519fed3344a8328648abf0a8e30045a32cfbb0d0adc590340147a"
 [[files]]
 path = ".omp/skills/find-best-rust-crates/SKILL.md"
 b3 = "3e23594606195d975ffadf6173992f24c85b0429a565b429c8e64be500242f6e"
+
+[[files]]
+path = ".omp/skills/git-cliff-treefmt-changelog/SKILL.md"
+b3 = "2897151a4dfaacb5d0b41fe2ecdec1d101d044b5813f2c09083e7dcd70a25db8"
+
+[[files]]
+path = ".omp/skills/reference-project-convention-drift/SKILL.md"
+b3 = "cff4620880f8ff2b87a27bca14542055909e699b932b43d83756f4f6429fe3f6"
