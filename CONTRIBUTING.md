@@ -19,6 +19,8 @@ If a doc, manifest, or implementation detail drifts, create or update a bead ins
 Before handing work off, run the narrow command that proves the behavior you changed.
 Project-wide gates, tree formatting, markdown formatting, and release checks are run by the orchestrating workflow unless the task explicitly asks for them.
 
+Coverage is advisory until a threshold policy is accepted: `mise run cargo:llvm-cov` is report-only, writes LCOV output to `coverage/lcov.info`, and does not enforce a percentage threshold yet.
+
 Never suppress a failing diagnostic to make a gate pass.
 Fix the source or record the blocker in the bead.
 

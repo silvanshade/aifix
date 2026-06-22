@@ -136,3 +136,27 @@ jobs:
       - *install-mise-tools
       - name: mise run cargo:nextest
         run: mise run cargo:nextest
+
+  cargo-llvm-cov:
+    name: cargo llvm-cov --workspace --all-targets --all-features
+    runs-on: ubuntu-latest
+    steps:
+      - *git-checkout
+      - *install-rust-tools
+      - *cargo-binstall
+      - name: enable mise tools
+        run: |
+          tools=()
+          tools+=("cargo:cargo-llvm-cov")
+          tools+=("aube")
+          tools+=("node")
+          IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
+      - *install-mise-tools
+      - *install-aube-packages
+      - name: mise run cargo:llvm-cov
+        run: mise run cargo:llvm-cov
+      - name: upload coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: coverage-lcov
+          path: coverage/

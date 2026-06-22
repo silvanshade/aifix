@@ -24,6 +24,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 ### Continuous Integration
 
 * Add release workflows
+* Add report-only coverage workflow
 
 ### Miscellaneous Tasks
 
