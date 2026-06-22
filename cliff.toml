@@ -1,0 +1,70 @@
+# git-cliff configuration for aifix release notes.
+# https://git-cliff.org/docs/configuration
+#
+# To backfill the first release without mutating history, run:
+# git-cliff 23fb2e717dc5ed6518072ead22e4db8b4020e38a.. --tag v0.0.0 --output CHANGELOG.md
+#
+# The regular task intentionally stays tag-driven:
+# mise run changelog:generate
+
+[changelog]
+header = """# Changelog
+
+All notable changes to aifix are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/)
+"""
+body = """{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+
+{% for commit in commits %}\
+* {% if commit.scope %}_({{ commit.scope }})_ {% endif %}\
+{% if commit.breaking %}**Breaking:** {% endif %}\
+{{ commit.message | upper_first }}
+{% endfor %}\
+{% endfor %}
+"""
+footer = "[unreleased]: https://github.com/silvanshade/aifix/compare/main...HEAD"
+trim = false
+render_always = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+require_conventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = true
+fail_on_unmatched_commit = false
+topo_order = false
+topo_order_commits = true
+sort_commits = "oldest"
+recurse_submodules = false
+
+commit_preprocessors = []
+commit_parsers = [
+  # Routine tool/config churn that should not appear in user-facing release notes.
+  { message = "^bd init:", skip = true },
+  { message = "^chore\\(mise\\): update$", skip = true },
+  { message = "^chore\\(git\\): update gitignore$", skip = true },
+  { message = "^chore\\(git\\): ignore bv config$", skip = true },
+  { message = "^docs: restore changelog heading", skip = true },
+  { message = "^chore\\(deps.*\\)", skip = true },
+  { message = "^chore\\(release\\): prepare for", skip = true },
+
+  # Preserve meaningful setup and release-readiness tasks.
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^refactor", group = "<!-- 3 -->Refactor" },
+  { message = "^docs?", group = "<!-- 4 -->Documentation" },
+  { message = "^test", group = "<!-- 5 -->Testing" },
+  { message = "^ci", group = "<!-- 6 -->Continuous Integration" },
+  { message = "^chore", group = "<!-- 7 -->Miscellaneous Tasks" },
+  { message = "^revert", group = "<!-- 8 -->Revert" },
+]
+link_parsers = []

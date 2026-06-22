@@ -1,0 +1,4 @@
+jailBuilds: true
+nodeLinker: isolated
+packages:
+  - "."

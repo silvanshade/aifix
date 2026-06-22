@@ -12,7 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   MISE_ENV: ci
-  MISE_ENABLE_TOOLS: ""
+  MISE_ENABLE_TOOLS: "aube,node"
   RUSTUP_TOOLCHAIN: nightly-2026-05-27
   CI_VERSION_MISE: 2026.6.0
 
@@ -45,6 +45,11 @@ jobs:
           cache: true
           experimental: true
 
+      - &install-aube-packages
+        uses: endevco/aube-action@f82ca2f6c943dbde1904945d9f0ee1a0faf8e945
+        with:
+          node-version: auto
+          run-install: true
   cargo-build:
     name: cargo build
     runs-on: ubuntu-latest
@@ -90,8 +95,13 @@ jobs:
           tools+=("cargo:zizmor")
           tools+=("github:numtide/treefmt")
           tools+=("github:tombi-toml/tombi")
+          tools+=("aube")
+          tools+=("node")
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
+      - *install-aube-packages
+      - name: mise run commitlint:branch
+        run: mise run commitlint:branch
       - name: install wrkflw
         uses: taiki-e/install-action@cde8c9e634f4a17bc06b61413ac0ef75450eac46
         with:

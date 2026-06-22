@@ -54,6 +54,18 @@ run = """
 treefmt --ci
 """
 
+[tasks."commitlint:last"]
+description = "Validate the most recent commit message"
+run = """
+aube exec commitlint --last --config .commitlintrc.mts
+"""
+
+[tasks."commitlint:branch"]
+description = "Validate commit messages from main to the current branch"
+run = """
+aube exec commitlint --from main --to HEAD --config .commitlintrc.mts
+"""
+
 [tasks."docs:manifest-drift"]
 description = "Verify docs/MANIFEST.toml BLAKE3 hashes against documented files"
 run = """
@@ -98,5 +110,7 @@ fi
 "cargo:rumdl" = "0.2.20"
 "cargo:typos-cli" = "1.47.2"
 "cargo:zizmor" = "1.25.2"
+"github:endevco/aube" = "1.23.0"
 "github:numtide/treefmt" = "2.5.0"
 "github:tombi-toml/tombi" = "1.1.3"
+node = "26.3.0"

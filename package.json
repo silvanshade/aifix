@@ -1,0 +1,14 @@
+{
+  "name": "aifix",
+  "private": true,
+  "type": "module",
+  "packageManager": "aube@1.23.0",
+  "scripts": {
+    "commitlint": "commitlint --config .commitlintrc.mts"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "@commitlint/types": "^21.0.1"
+  }
+}
