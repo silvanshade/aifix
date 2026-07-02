@@ -10,7 +10,7 @@
 
 ### Crate-local diagnostic core
 
-* Added protocol adapters in `src/adapter.rs` for normalized aifix JSON, clippy and rustc JSONL, TypeScript text, LSP JSON, and generic/nushell text.
+* Added protocol adapters in `src/adapter.rs` for normalized aifix JSON, clippy and rustc JSONL, Agda text, TypeScript text, LSP JSON, and generic/nushell text.
 * Added normalized serde-compatible model types in `src/model.rs`.
 * Added batch profile execution in `src/batch.rs` using direct argv invocation and captured stdout, stderr, cwd, and exit code.
 * Added digest construction in `src/digest.rs` for semantic deduplication, source and severity counts, source/code grouping, invocation preservation, and sampled diagnostics.
@@ -32,8 +32,10 @@
 
 ### Integration coverage
 
-* Added `tests/pipeline_cli.rs` with seven end-to-end CLI scenarios:
+* Added and expanded `tests/pipeline_cli.rs` with end-to-end CLI scenarios including:
   + clippy JSON pipeline to JSON digest;
+  + Agda text pipeline and auto detection to JSON digests;
+  + Agda batch profile execution through a real `agda` executable when available;
   + TypeScript text pipeline to markdown guidance;
   + LSP JSON pipeline to compact JSON digest;
   + custom batch command execution through a real executable;
@@ -41,6 +43,7 @@
   + non-UTF-8 batch extra-arg rejection;
   + non-file project config rejection.
 * Added `tests/fixtures/clippy.jsonl` as the current Clippy fixture shared by integration and benchmark paths.
+* Added `tests/fixtures/agda.txt` as the Agda CLI text fixture shared by pipeline integration coverage.
 
 ### Benchmark and fuzz hooks
 

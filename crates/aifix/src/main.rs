@@ -150,7 +150,7 @@ struct PipelineCommand
 #[derive(Debug, Args)]
 struct BatchCommand
 {
-    /// Profile name to execute: rust, typescript, nushell, or custom.
+    /// Profile name to execute: rust, typescript, agda, nushell, or custom.
     profile: String,
 
     /// Protocol used to parse the invoked tool output.
@@ -216,6 +216,8 @@ enum CliProtocol
     ClippyJson,
     /// Plain TypeScript compiler output with pretty printing disabled.
     TypescriptText,
+    /// Plain Agda compiler diagnostics.
+    AgdaText,
     /// Language Server Protocol diagnostic arrays or publishDiagnostics params.
     LspJson,
     /// Nushell linter text output, parsed as generic diagnostic lines.
@@ -292,6 +294,7 @@ impl From<CliProtocol> for Protocol
             | CliProtocol::AifixJson => Self::AifixJson,
             | CliProtocol::ClippyJson => Self::ClippyJson,
             | CliProtocol::TypescriptText => Self::TypescriptText,
+            | CliProtocol::AgdaText => Self::AgdaText,
             | CliProtocol::LspJson => Self::LspJson,
             | CliProtocol::NushellText => Self::NushellText,
         }

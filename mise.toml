@@ -119,6 +119,7 @@ fi
 "cargo:rumdl" = "0.2.20"
 "cargo:typos-cli" = "1.47.2"
 "cargo:zizmor" = "1.25.2"
+"github:agda/agda" = "2.8.0"
 "github:endevco/aube" = "1.23.0"
 "github:numtide/treefmt" = "2.5.0"
 "github:tombi-toml/tombi" = "1.1.3"

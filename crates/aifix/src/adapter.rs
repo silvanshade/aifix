@@ -71,6 +71,7 @@ pub fn parse_diagnostics(
         | Protocol::Auto => parse_auto(input),
         | Protocol::AifixJson => parse_aifix_json(input),
         | Protocol::ClippyJson => parse_clippy_json(input),
+        | Protocol::AgdaText => parse_agda_text(input),
         | Protocol::TypescriptText => parse_typescript_text(input),
         | Protocol::LspJson => parse_lsp_json(input),
         | Protocol::NushellText => parse_nushell_text(input),
@@ -82,8 +83,9 @@ pub fn parse_diagnostics(
 /// # Contract
 /// - requires: `input` is UTF-8 diagnostic output and may be empty.
 /// - ensures: empty or whitespace-only input yields an empty vector;
-///   structured-looking inputs are handled by their matched adapter, while
-///   unstructured text falls back to TypeScript then generic diagnostics.
+///   structured-looking inputs are handled by their matched adapter, while Agda
+///   text is detected before unstructured output falls back to TypeScript then
+///   generic diagnostics.
 /// - fails: returns the matched structured parser error instead of silently
 ///   converting malformed JSON, LSP, or cargo shapes to generic text.
 /// - panics: none.
@@ -100,6 +102,12 @@ fn parse_auto(input: &str) -> Result<Vec<Diagnostic>, AifixError>
     }
 
     match probe_complete_json(input) {
+        | AutoProbe::Matched(diagnostics) => return Ok(diagnostics),
+        | AutoProbe::Invalid(error) => return Err(error),
+        | AutoProbe::NoMatch => {},
+    }
+
+    match probe_agda_text(input) {
         | AutoProbe::Matched(diagnostics) => return Ok(diagnostics),
         | AutoProbe::Invalid(error) => return Err(error),
         | AutoProbe::NoMatch => {},
@@ -526,6 +534,209 @@ fn split_code_message(rest: &str) -> Option<(String, String)>
         );
     }
     has_typescript_code.then_some((code, message))
+}
+
+/// Probe Agda text diagnostics when at least one Agda-shaped header is present.
+///
+/// # Contract
+/// - requires: `input` is non-empty UTF-8 text.
+/// - ensures: returns [`AutoProbe::NoMatch`] unless a complete Agda diagnostic
+///   header can be parsed; valid Agda diagnostics are normalized before generic
+///   text fallback.
+/// - fails: parser failures after an Agda header match become
+///   [`AutoProbe::Invalid`].
+/// - panics: none.
+fn probe_agda_text(input: &str) -> AutoProbe
+{
+    if input.lines().any(|line| parse_agda_header(line).is_some()) {
+        AutoProbe::from_result(parse_agda_text(input))
+    }
+    else {
+        AutoProbe::NoMatch
+    }
+}
+
+/// Parse direct Agda text diagnostics.
+///
+/// # Contract
+/// - requires: `input` is UTF-8 Agda CLI diagnostic text.
+/// - ensures: ignores status lines, groups each Agda header with following
+///   non-header body lines, and returns `agda` diagnostics with one same-line
+///   span and the Agda tag preserved as the diagnostic code.
+/// - fails: returns a parser error when explicitly selected non-empty input has
+///   no Agda-shaped diagnostic headers.
+/// - panics: none; malformed candidate headers are treated as non-matches.
+fn parse_agda_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
+{
+    let mut diagnostics = Vec::new();
+    let mut current: Option<AgdaDiagnosticBuilder> = None;
+
+    for line in input.lines() {
+        if is_agda_status_line(line) {
+            continue;
+        }
+
+        if let Some(header) = parse_agda_header(line) {
+            if let Some(builder) = current.take() {
+                diagnostics.push(builder.finish());
+            }
+            current = Some(AgdaDiagnosticBuilder::new(header));
+        }
+        else if let Some(builder) = current.as_mut() {
+            builder.push_body_line(line);
+        }
+    }
+
+    if let Some(builder) = current {
+        diagnostics.push(builder.finish());
+    }
+
+    if diagnostics.is_empty() && !input.trim().is_empty() {
+        return Err(AifixError::parser(
+            "agda text input did not contain Agda diagnostics",
+        ));
+    }
+
+    debug_assert!(
+        input.trim().is_empty() || !diagnostics.is_empty(),
+        "non-empty successful Agda parsing must produce diagnostics"
+    );
+    Ok(diagnostics)
+}
+
+/// Parsed fields from one Agda diagnostic header.
+struct AgdaHeader
+{
+    /// File path reported before the one-based source position.
+    file: String,
+    /// One-based source line.
+    line: u32,
+    /// One-based inclusive start column.
+    start_column: u32,
+    /// One-based same-line end column.
+    end_column: u32,
+    /// Severity label reported by Agda.
+    severity: Severity,
+    /// Agda diagnostic tag without surrounding brackets.
+    tag: String,
+}
+
+/// Accumulate body lines for one Agda diagnostic before model construction.
+struct AgdaDiagnosticBuilder
+{
+    /// Header fields shared by the finished diagnostic.
+    header: AgdaHeader,
+    /// Body lines following the header until the next header.
+    body: Vec<String>,
+}
+
+impl AgdaDiagnosticBuilder
+{
+    /// Start a diagnostic from an already parsed Agda header.
+    ///
+    /// # Contract
+    /// - requires: `header` was parsed from a complete Agda header line.
+    /// - ensures: returns a builder with no body lines yet.
+    /// - panics: none.
+    fn new(header: AgdaHeader) -> Self
+    {
+        Self {
+            header,
+            body: Vec::new(),
+        }
+    }
+
+    /// Add one body line exactly as Agda emitted it.
+    ///
+    /// # Contract
+    /// - requires: `line` is a non-header diagnostic body line.
+    /// - ensures: preserves body text for later surrounding-whitespace trim.
+    /// - panics: none.
+    fn push_body_line(
+        &mut self,
+        line: &str,
+    )
+    {
+        self.body.push(line.to_owned());
+    }
+
+    /// Finish a normalized Agda diagnostic.
+    ///
+    /// # Contract
+    /// - requires: the builder contains a valid header.
+    /// - ensures: returns a diagnostic with source `agda`, the header tag as
+    ///   code, body text trimmed around the whole message, and the tag as a
+    ///   fallback message when the body is blank.
+    /// - panics: none.
+    fn finish(self) -> Diagnostic
+    {
+        let message = non_empty_trimmed_owned(&self.body.join("\n"))
+            .unwrap_or_else(|| self.header.tag.clone());
+        let span = Span::new(
+            self.header.file,
+            Some(self.header.line),
+            Some(self.header.start_column),
+            Some(self.header.line),
+            Some(self.header.end_column),
+        );
+
+        Diagnostic::new("agda", Some(self.header.tag), self.header.severity, message).with_details(
+            vec![span],
+            Vec::new(),
+            None,
+        )
+    }
+}
+
+/// Parse one Agda header line.
+///
+/// # Contract
+/// - requires: `line` is one logical line of Agda CLI output.
+/// - ensures: returns parsed header fields only for `file:line.start-end:
+///   severity: [tag]` lines.
+/// - fails: returns `None` for missing or invalid captures.
+/// - panics: none; all string slicing uses checked split operations.
+fn parse_agda_header(line: &str) -> Option<AgdaHeader>
+{
+    let line = line.trim_end();
+    let (before_tag, tag_with_close) = line.rsplit_once(": [")?;
+    let tag = non_empty_trimmed_owned(tag_with_close.strip_suffix(']')?)?;
+    let (location, severity_text) = before_tag.rsplit_once(':')?;
+    let severity_text = severity_text.trim();
+    if severity_text.is_empty() {
+        return None;
+    }
+    let (file_and_line, columns) = location.rsplit_once('.')?;
+    let (file, line_number) = file_and_line.rsplit_once(':')?;
+    let (start_column, end_column) = columns.split_once('-')?;
+    let line_number = parse_u32_str(line_number)?;
+    let start_column = parse_u32_str(start_column)?;
+    let end_column = parse_u32_str(end_column)?;
+    let file = non_empty_trimmed_owned(file)?;
+    if line_number == 0 || start_column == 0 || end_column == 0 || start_column > end_column {
+        return None;
+    }
+
+    Some(AgdaHeader {
+        file,
+        line: line_number,
+        start_column,
+        end_column,
+        severity: line_severity(severity_text),
+        tag,
+    })
+}
+
+/// Return whether an Agda line is progress/status output rather than a body.
+///
+/// # Contract
+/// - requires: `line` is one logical Agda output line.
+/// - ensures: recognizes known progress lines that should not become diagnostic
+///   messages.
+/// - panics: none.
+fn is_agda_status_line(line: &str) -> bool
+{
+    line.trim_start().starts_with("Checking ")
 }
 
 /// Parse LSP diagnostic arrays, wrapper objects, or publishDiagnostics params.
@@ -1023,6 +1234,190 @@ mod tests
         require(
             matches!(error, AifixError::Parser(_)),
             "reversed LSP ranges should return parser errors",
+        )
+    }
+
+    /// Protocol parsing accepts the stable Agda spelling and documented
+    /// aliases.
+    #[test]
+    fn protocol_parses_agda_text_aliases() -> Result<(), AifixError>
+    {
+        for alias in ["agda-text", "agda_text", "agda", "agda-cli"] {
+            require(
+                alias.parse::<Protocol>()? == Protocol::AgdaText,
+                "Agda protocol alias should resolve to AgdaText",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Agda text parsing preserves `UnequalSorts` fields and message body.
+    #[test]
+    fn agda_text_parses_unequal_sorts() -> Result<(), AifixError>
+    {
+        let mut diagnostics = parse_diagnostics(
+            Protocol::AgdaText,
+            concat!(
+                "Checking Bad (/private/tmp/aifix-agda-smoke/Bad.agda).\n",
+                "/private/tmp/aifix-agda-smoke/Bad.agda:4.7-10: error: [UnequalSorts]\n",
+                "Set₁ != Set\n",
+                "when checking that the expression Set has type Set\n",
+            ),
+        )?
+        .into_iter();
+        let diagnostic = diagnostics
+            .next()
+            .ok_or_else(|| AifixError::parser("Agda parser returned no diagnostics"))?;
+        require(diagnostic.source == "agda", "Agda source should be agda")?;
+        require(
+            diagnostic.code.as_deref() == Some("UnequalSorts"),
+            "Agda code should preserve UnequalSorts",
+        )?;
+        require(
+            diagnostic.message
+                == concat!(
+                    "Set₁ != Set\n",
+                    "when checking that the expression Set has type Set",
+                ),
+            "Agda body should preserve multiline message text",
+        )?;
+        let span = diagnostic
+            .spans
+            .first()
+            .ok_or_else(|| AifixError::parser("Agda diagnostic had no span"))?;
+        require(
+            span.file == "/private/tmp/aifix-agda-smoke/Bad.agda",
+            "Agda span should preserve file",
+        )?;
+        require(span.line == Some(4), "Agda span should preserve line")?;
+        require(
+            span.column == Some(7),
+            "Agda span should preserve start column",
+        )?;
+        require(
+            span.end_line == Some(4),
+            "Agda span should use same-line end line",
+        )?;
+        require(
+            span.end_column == Some(10),
+            "Agda span should preserve end column",
+        )?;
+        require(
+            diagnostic.raw.is_none(),
+            "Agda text should not preserve raw JSON",
+        )?;
+        Ok(())
+    }
+
+    /// Agda text parsing groups `FileNotFound` multiline bodies.
+    #[test]
+    fn agda_text_parses_file_not_found_multiline_body() -> Result<(), AifixError>
+    {
+        let mut diagnostics = parse_diagnostics(
+            Protocol::AgdaText,
+            concat!(
+                "/private/tmp/aifix-agda-smoke/Missing.agda:3.1-25: error: [FileNotFound]\n",
+                "Failed to find source of module DoesNotExist ...\n",
+                "when scope checking the declaration\n",
+                "  open import DoesNotExist\n",
+            ),
+        )?
+        .into_iter();
+        let diagnostic = diagnostics
+            .next()
+            .ok_or_else(|| AifixError::parser("Agda parser returned no diagnostics"))?;
+        require(
+            diagnostic.code.as_deref() == Some("FileNotFound"),
+            "Agda code should preserve FileNotFound",
+        )?;
+        require(
+            diagnostic.message
+                == concat!(
+                    "Failed to find source of module DoesNotExist ...\n",
+                    "when scope checking the declaration\n",
+                    "  open import DoesNotExist",
+                ),
+            "Agda FileNotFound body should include all non-header lines",
+        )?;
+        let span = diagnostic
+            .spans
+            .first()
+            .ok_or_else(|| AifixError::parser("Agda diagnostic had no span"))?;
+        require(span.line == Some(3), "FileNotFound line should be parsed")?;
+        require(
+            span.column == Some(1),
+            "FileNotFound start column should be parsed",
+        )?;
+        require(
+            span.end_column == Some(25),
+            "FileNotFound end column should be parsed",
+        )
+    }
+
+    /// Agda text parsing preserves `UnsolvedInteractionMetas` diagnostics.
+    #[test]
+    fn agda_text_parses_unsolved_interaction_metas() -> Result<(), AifixError>
+    {
+        let mut diagnostics = parse_diagnostics(
+            Protocol::AgdaText,
+            concat!(
+                "/private/tmp/aifix-agda-smoke/Hole.agda:6.5-6: error: ",
+                "[UnsolvedInteractionMetas]\n",
+                "Unsolved interaction metas at the following locations:\n",
+                "  /private/tmp/aifix-agda-smoke/Hole.agda:6,5-6\n",
+            ),
+        )?
+        .into_iter();
+        let diagnostic = diagnostics
+            .next()
+            .ok_or_else(|| AifixError::parser("Agda parser returned no diagnostics"))?;
+        require(
+            diagnostic.code.as_deref() == Some("UnsolvedInteractionMetas"),
+            "Agda code should preserve UnsolvedInteractionMetas",
+        )?;
+        require(
+            diagnostic.message.contains("Unsolved interaction metas"),
+            "Agda UnsolvedInteractionMetas message should preserve body",
+        )?;
+        let span = diagnostic
+            .spans
+            .first()
+            .ok_or_else(|| AifixError::parser("Agda diagnostic had no span"))?;
+        require(span.line == Some(6), "hole span line should be parsed")?;
+        require(
+            span.column == Some(5),
+            "hole span start column should be parsed",
+        )?;
+        require(
+            span.end_column == Some(6),
+            "hole span end column should be parsed",
+        )
+    }
+
+    /// Auto mode detects Agda text before falling back to generic text.
+    #[test]
+    fn auto_detects_agda_text_before_generic_fallback() -> Result<(), AifixError>
+    {
+        let mut diagnostics = parse_diagnostics(
+            Protocol::Auto,
+            concat!(
+                "Checking Bad (/private/tmp/aifix-agda-smoke/Bad.agda).\n",
+                "/private/tmp/aifix-agda-smoke/Bad.agda:4.7-10: error: [UnequalSorts]\n",
+                "Set₁ != Set\n",
+            ),
+        )?
+        .into_iter();
+        let diagnostic = diagnostics
+            .next()
+            .ok_or_else(|| AifixError::parser("auto Agda parser returned no diagnostics"))?;
+        require(
+            diagnostic.source == "agda",
+            "auto should select Agda parser instead of generic text",
+        )?;
+        require(
+            diagnostic.code.as_deref() == Some("UnequalSorts"),
+            "auto Agda parser should preserve tag code",
         )
     }
 

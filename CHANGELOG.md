@@ -13,6 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(cache)_ Add syntax-aware replay
 * _(mcp)_ Harden fix replay cache
 * _(config)_ Default to XDG config paths
+* _(agda)_ Add direct CLI diagnostic support
 
 ### Refactor
 

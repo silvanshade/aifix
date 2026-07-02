@@ -32,6 +32,8 @@ pub enum Protocol
     AifixJson,
     /// Cargo/rustc/clippy newline-delimited compiler-message JSON.
     ClippyJson,
+    /// Plain Agda `--interaction-json`-free text diagnostics.
+    AgdaText,
     /// Plain TypeScript compiler diagnostics.
     TypescriptText,
     /// JSON Language Server Protocol diagnostics.
@@ -51,6 +53,7 @@ impl Protocol
             | Self::Auto => "auto",
             | Self::AifixJson => "aifix-json",
             | Self::ClippyJson => "clippy-json",
+            | Self::AgdaText => "agda-text",
             | Self::TypescriptText => "typescript-text",
             | Self::LspJson => "lsp-json",
             | Self::NushellText => "nushell-text",
@@ -96,6 +99,7 @@ impl FromStr for Protocol
             | "auto" => Ok(Self::Auto),
             | "aifix-json" | "aifix_json" | "aifix" => Ok(Self::AifixJson),
             | "clippy-json" | "clippy_json" | "rust-json" | "rustc-json" => Ok(Self::ClippyJson),
+            | "agda-text" | "agda_text" | "agda" | "agda-cli" => Ok(Self::AgdaText),
             | "typescript-text" | "typescript_text" | "tsc" | "tsc-text" => {
                 Ok(Self::TypescriptText)
             },

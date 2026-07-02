@@ -1,0 +1,11 @@
+Checking Bad (/workspace/agda/Bad.agda).
+/workspace/agda/Bad.agda:4.7-10: error: [UnequalSorts]
+Set₁ != Set
+when checking that the expression Set has type Set
+
+/workspace/agda/Missing.agda:3.1-25: error: [FileNotFound]
+Failed to find source of module DoesNotExist in any of the following locations:
+  /workspace/agda/DoesNotExist.agda
+  /workspace/agda/DoesNotExist.lagda
+when scope checking the declaration
+  open import DoesNotExist

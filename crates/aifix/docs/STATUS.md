@@ -14,13 +14,15 @@ The crate contains package metadata, protocol adapters, the normalized model, di
 * Public modules in `lib.rs`: `adapter`, `batch`, `config`, `digest`, `error`, `explain`, `model`, and `render`.
 * CLI commands: `pipeline`, `batch`, `explain`, `config paths`, and `completions <shell>`.
 * Current integration tests: `crates/aifix/tests/pipeline_cli.rs`.
-* Current fixture: `crates/aifix/tests/fixtures/clippy.jsonl`.
+* Current fixtures: `crates/aifix/tests/fixtures/clippy.jsonl` and `crates/aifix/tests/fixtures/agda.txt`.
 * Current benchmark hook: `crates/aifix/benches/ingest.rs`, registering `clippy fixture parse and digest`.
 * Current fuzz hook: `fuzz/fuzz_targets/ingest.rs`, registered by `fuzz/Cargo.toml` as target `ingest`.
 
 Current integration tests in `pipeline_cli.rs` cover:
 
 * clippy JSON pipeline output as JSON digest;
+* Agda text pipeline and auto-detection output as JSON digests;
+* Agda batch profile execution through a real `agda` executable when available;
 * TypeScript text pipeline output as markdown guidance;
 * LSP JSON pipeline output as compact JSON digest;
 * custom batch command execution through a real executable;

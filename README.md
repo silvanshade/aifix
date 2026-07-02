@@ -29,10 +29,11 @@ Batch mode runs a configured profile directly, captures stdout, stderr, and exit
 ```sh
 aifix batch rust --format compact-json
 aifix batch typescript --protocol typescript-text --cwd .
+aifix batch agda --protocol agda-text -- -i src src/Main.agda
 aifix batch custom --protocol nushell-text -- nu-lint scripts/check.nu
 ```
 
-Built-in profiles target Rust, TypeScript, and Nushell.
+Built-in profiles target Rust, TypeScript, Agda, and Nushell.
 Custom profiles require an explicit command argv.
 Commands are executed without a shell.
 Extra arguments after `--` must be valid UTF-8, and each captured stream is bounded to 1 MiB.
@@ -50,18 +51,15 @@ The server advertises tools for pipeline and batch digests, diagnostic dedupe, c
 Project-local cache state is stored in `.aifix/diagnostics.json`.
 Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
 
-<details>
-<summary>Agent Tool Guidance</summary>
+#### Agent tool guidance
 
-Use `aifix_pipeline` when another tool already produced diagnostic output.
-Use `aifix_batch` when a configured profile should run diagnostics directly.
-Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
-Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
-`aifix` normalizes diagnostics and does not invent fixes.
-Parseable diagnostics from nonzero tool exits are findings, not an operational failure.
-Agents should still verify repairs with the native tools and tests that own the code.
-
-</details>
+* Use `aifix_pipeline` when another tool already produced diagnostic output.
+* Use `aifix_batch` when a configured profile should run diagnostics directly.
+* Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
+* Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
+* `aifix` normalizes diagnostics and does not invent fixes.
+* Parseable diagnostics from nonzero tool exits are findings, not an operational failure.
+* Agents should still verify repairs with the native tools and tests that own the code.
 
 ## Protocols and output formats
 
@@ -71,11 +69,12 @@ Current input protocols:
 * `aifix-json`
 * `clippy-json` for rustc/clippy compiler-message JSON lines
 * `typescript-text` for `tsc --pretty false` style diagnostics
+* `agda-text` for direct Agda CLI diagnostics
 * `lsp-json` for diagnostic arrays or `publishDiagnostics` params
 * `nushell-text` for generic non-empty diagnostic lines
 
 `auto` rejects malformed structured-looking input instead of silently converting it to generic text.
-TypeScript and LSP adapters reject blank required fields and invalid or reversed ranges at the adapter boundary.
+TypeScript and LSP adapters reject blank required fields and invalid or reversed ranges at the adapter boundary; the Agda adapter groups direct CLI headers with multiline bodies.
 
 Current output formats:
 

@@ -40,6 +40,9 @@ const RUST_COMMAND: &[&str] = &[
 /// Built-in TypeScript profile command.
 const TYPESCRIPT_COMMAND: &[&str] = &["tsc", "--noEmit", "--pretty", "false"];
 
+/// Built-in Agda profile command.
+const AGDA_COMMAND: &[&str] = &["agda", "--no-libraries"];
+
 /// Built-in Nushell profile command.
 const NUSHELL_COMMAND: &[&str] = &["nu-lint"];
 
@@ -167,6 +170,7 @@ pub fn profile_command(
     let mut argv = match profile {
         | "rust" => strings(RUST_COMMAND),
         | "typescript" | "ts" => strings(TYPESCRIPT_COMMAND),
+        | "agda" => strings(AGDA_COMMAND),
         | "nushell" | "nu" => strings(NUSHELL_COMMAND),
         | "custom" => {
             if extra_args.is_empty() {
@@ -178,7 +182,7 @@ pub fn profile_command(
         },
         | other => {
             return Err(AifixError::invalid_argument(format!(
-                "unknown batch profile `{other}`; expected rust, typescript, nushell, or custom"
+                "unknown batch profile `{other}`; expected rust, typescript, agda, nushell, or custom"
             )));
         },
     };

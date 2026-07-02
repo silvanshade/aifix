@@ -389,7 +389,7 @@ fn protocol_schema() -> Value
 {
     json!({
         "type": "string",
-        "enum": ["auto", "aifix-json", "clippy-json", "typescript-text", "lsp-json", "nushell-text"],
+        "enum": ["auto", "aifix-json", "clippy-json", "typescript-text", "agda-text", "lsp-json", "nushell-text"],
     })
 }
 

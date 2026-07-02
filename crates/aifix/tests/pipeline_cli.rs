@@ -471,14 +471,16 @@ mod tests
         needle: &str,
     ) -> bool
     {
-        match *value {
-            | Value::String(ref text) => text.contains(needle),
-            | Value::Array(ref items) => items.iter().any(|item| json_contains_str(item, needle)),
-            | Value::Object(ref fields) => {
-                fields.values().any(|item| json_contains_str(item, needle))
-            },
-            | Value::Null | Value::Bool(_) | Value::Number(_) => false,
+        if let Some(text) = value.as_str() {
+            return text.contains(needle);
         }
+        if let Some(items) = value.as_array() {
+            return items.iter().any(|item| json_contains_str(item, needle));
+        }
+        if let Some(fields) = value.as_object() {
+            return fields.values().any(|item| json_contains_str(item, needle));
+        }
+        false
     }
 
     /// Returns true when any JSON number leaf equals `expected`.
@@ -487,14 +489,39 @@ mod tests
         expected: u64,
     ) -> bool
     {
-        match *value {
-            | Value::Number(ref number) => number.as_u64() == Some(expected),
-            | Value::Array(ref items) => items.iter().any(|item| json_contains_u64(item, expected)),
-            | Value::Object(ref fields) => fields
-                .values()
-                .any(|item| json_contains_u64(item, expected)),
-            | Value::Null | Value::Bool(_) | Value::String(_) => false,
+        if let Some(number) = value.as_u64() {
+            return number == expected;
         }
+        if let Some(items) = value.as_array() {
+            return items.iter().any(|item| json_contains_u64(item, expected));
+        }
+        if let Some(fields) = value.as_object() {
+            return fields
+                .values()
+                .any(|item| json_contains_u64(item, expected));
+        }
+        false
+    }
+
+    /// Returns true when any object field named `field` equals `expected`.
+    fn json_field_equals_str(
+        value: &Value,
+        field: &str,
+        expected: &str,
+    ) -> bool
+    {
+        if let Some(items) = value.as_array() {
+            return items
+                .iter()
+                .any(|item| json_field_equals_str(item, field, expected));
+        }
+        if let Some(fields) = value.as_object() {
+            return fields.get(field).and_then(Value::as_str) == Some(expected)
+                || fields
+                    .values()
+                    .any(|item| json_field_equals_str(item, field, expected));
+        }
+        false
     }
 
     /// Returns true when any object field named `field` equals `expected`.
@@ -504,18 +531,18 @@ mod tests
         expected: u64,
     ) -> bool
     {
-        match *value {
-            | Value::Array(ref items) => items
+        if let Some(items) = value.as_array() {
+            return items
                 .iter()
-                .any(|item| json_field_equals_u64(item, field, expected)),
-            | Value::Object(ref fields) => {
-                fields.get(field).and_then(Value::as_u64) == Some(expected)
-                    || fields
-                        .values()
-                        .any(|item| json_field_equals_u64(item, field, expected))
-            },
-            | Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+                .any(|item| json_field_equals_u64(item, field, expected));
         }
+        if let Some(fields) = value.as_object() {
+            return fields.get(field).and_then(Value::as_u64) == Some(expected)
+                || fields
+                    .values()
+                    .any(|item| json_field_equals_u64(item, field, expected));
+        }
+        false
     }
 
     /// Converts a filesystem path into the UTF-8 CLI path expected by `aifix`.
@@ -1023,6 +1050,88 @@ diff --git a/src/main.rs b/src/main.rs
         Ok(())
     }
 
+    /// Verifies that Agda CLI text diagnostics become a grouped JSON digest.
+    #[test]
+    fn agda_text_pipeline_emits_json_digest() -> Result<(), Box<dyn Error>>
+    {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agda.txt");
+        require(fixture.try_exists()?, || {
+            format!(
+                "Agda CLI fixture should exist under the crate tests/fixtures directory: {}",
+                fixture.display()
+            )
+        })?;
+        let fixture = path_to_str(&fixture)?;
+        let output = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+            "--max-diagnostics",
+            "4",
+        ])?;
+        let digest = successful_json(output)?;
+
+        require(
+            json_field_equals_str(&digest, "code", "UnequalSorts"),
+            || format!("Agda digest should preserve the Agda code tag: {digest}"),
+        )?;
+        require(json_field_equals_str(&digest, "source", "agda"), || {
+            format!("Agda digest should preserve the source name: {digest}")
+        })?;
+        require(
+            json_field_equals_str(&digest, "file", "/workspace/agda/Bad.agda"),
+            || format!("Agda digest should preserve the diagnostic path: {digest}"),
+        )?;
+        require(
+            json_contains_str(&digest, "expression Set has type Set"),
+            || format!("Agda digest should preserve the diagnostic message body: {digest}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that auto protocol detection recognizes Agda text diagnostics.
+    #[test]
+    fn auto_pipeline_detects_agda_text_before_generic_nushell() -> Result<(), Box<dyn Error>>
+    {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agda.txt");
+        require(fixture.try_exists()?, || {
+            format!(
+                "Agda CLI fixture should exist under the crate tests/fixtures directory: {}",
+                fixture.display()
+            )
+        })?;
+        let fixture = path_to_str(&fixture)?;
+        let output = run_aifix([
+            "pipeline",
+            "--protocol",
+            "auto",
+            "--format",
+            "compact-json",
+            "--input",
+            fixture,
+            "--max-diagnostics",
+            "4",
+        ])?;
+        let digest = successful_json(output)?;
+        let encoded = digest.to_string();
+
+        require(
+            json_field_equals_str(&digest, "code", "UnequalSorts"),
+            || format!("auto Agda digest should preserve the Agda code tag: {digest}"),
+        )?;
+        require(json_field_equals_str(&digest, "source", "agda"), || {
+            format!("auto Agda digest should preserve the Agda source: {digest}")
+        })?;
+        require(!encoded.contains("nushell"), || {
+            format!("auto Agda digest should not fall back to generic Nushell text: {encoded}")
+        })?;
+        Ok(())
+    }
+
     /// Verifies that the default config path policy honors `XDG_CONFIG_HOME`.
     #[test]
     fn config_paths_reports_xdg_user_config_by_default() -> Result<(), Box<dyn Error>>
@@ -1412,6 +1521,65 @@ diff --git a/src/main.rs b/src/main.rs
         require(!encoded.contains("\"raw\""), || {
             format!("compact digest should omit raw diagnostic payloads: {encoded}")
         })?;
+        Ok(())
+    }
+
+    /// Verifies that built-in Agda batch mode treats parseable nonzero exits as
+    /// successful diagnostic digests.
+    #[test]
+    fn agda_batch_type_error_emits_json_digest_when_agda_exists() -> Result<(), Box<dyn Error>>
+    {
+        match Command::new("agda").arg("--version").output() {
+            | Ok(_) => {},
+            | Err(error) => {
+                eprintln!("SKIP: agda unavailable in PATH: {error}");
+                return Ok(());
+            },
+        }
+
+        let temp_dir = create_temp_dir("agda-batch")?;
+        let bad_path = temp_dir.join("Bad.agda");
+        fs::write(
+            &bad_path,
+            concat!("module Bad where\n\n", "bad : Set\n", "bad = Set\n"),
+        )?;
+        let output = run_aifix([
+            OsString::from("batch"),
+            OsString::from("agda"),
+            OsString::from("--protocol"),
+            OsString::from("agda-text"),
+            OsString::from("--format"),
+            OsString::from("json"),
+            OsString::from("--max-diagnostics"),
+            OsString::from("4"),
+            OsString::from("--"),
+            OsString::from("-i"),
+            temp_dir.as_os_str().to_os_string(),
+            bad_path.as_os_str().to_os_string(),
+        ])?;
+        let digest = successful_json(output)?;
+        let expected_bad_path = bad_path.canonicalize()?;
+        let expected_bad_path = path_to_str(&expected_bad_path)?;
+
+        require(
+            json_field_equals_str(&digest, "code", "UnequalSorts"),
+            || format!("Agda batch digest should preserve the Agda code tag: {digest}"),
+        )?;
+        require(json_field_equals_str(&digest, "source", "agda"), || {
+            format!("Agda batch digest should preserve the Agda source: {digest}")
+        })?;
+        require(
+            json_field_equals_str(&digest, "file", expected_bad_path),
+            || {
+                format!(
+                    "Agda batch digest should preserve the canonical temporary file path {expected_bad_path}: {digest}"
+                )
+            },
+        )?;
+        require(
+            json_contains_str(&digest, "expression Set has type Set"),
+            || format!("Agda batch digest should preserve the diagnostic message body: {digest}"),
+        )?;
         Ok(())
     }
 
