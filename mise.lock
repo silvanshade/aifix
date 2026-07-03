@@ -36,6 +36,45 @@ backend = "cargo:typos-cli"
 version = "1.25.2"
 backend = "cargo:zizmor"
 
+[[tools."github:agda/agda"]]
+version = "2.8.0"
+backend = "github:agda/agda"
+
+[tools."github:agda/agda"."platforms.linux-arm64"]
+checksum = "sha256:824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-linux.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249125"
+
+[tools."github:agda/agda"."platforms.linux-arm64-musl"]
+checksum = "sha256:824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-linux.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249125"
+
+[tools."github:agda/agda"."platforms.linux-x64"]
+checksum = "sha256:824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-linux.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249125"
+
+[tools."github:agda/agda"."platforms.linux-x64-musl"]
+checksum = "sha256:824081b8dcbe431289a50ac6bd83e451f390c51c3884ac7a8c4a5c0df2632faf"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-linux.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249125"
+
+[tools."github:agda/agda"."platforms.macos-arm64"]
+checksum = "sha256:9a35071eb9747f984177f48e1ba7008a9cebccfc259a40a0a84b29ffc2ec2db6"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-macOS-arm64.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249124"
+
+[tools."github:agda/agda"."platforms.macos-x64"]
+checksum = "sha256:9d3b4f376bc9469b5e0c684bf06053f7dae327f7e4314f31f3edc866a9bb3bc5"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-macOS-x64.tar.xz"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249127"
+
+[tools."github:agda/agda"."platforms.windows-x64"]
+checksum = "sha256:5c97846c45dc8c43d79a5df3cc78ccf58bad710aac2182b70c4f5ede30af3cbc"
+url = "https://github.com/agda/agda/releases/download/v2.8.0/Agda-v2.8.0-win64.zip"
+url_api = "https://api.github.com/repos/agda/agda/releases/assets/270249126"
+
 [[tools."github:endevco/aube"]]
 version = "1.23.0"
 backend = "github:endevco/aube"
@@ -152,3 +191,31 @@ url_api = "https://api.github.com/repos/tombi-toml/tombi/releases/assets/4431644
 [[tools.node]]
 version = "26.3.0"
 backend = "core:node"
+
+[tools.node."platforms.linux-arm64"]
+checksum = "sha256:b2e01f65905c24cb5dd19c4cfbfefe0118e0504c170cc18beac343a2abbb59bd"
+url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-linux-arm64.tar.gz"
+
+[tools.node."platforms.linux-arm64-musl"]
+checksum = "sha256:2487ff4f03dbd8998a3778886d50c1ee5f13a3b9cefbfa3aed02c32dbf1e1fb8"
+url = "https://unofficial-builds.nodejs.org/download/release/v26.3.0/node-v26.3.0-linux-arm64-musl.tar.gz"
+
+[tools.node."platforms.linux-x64"]
+checksum = "sha256:a6e65cc653e40c1653b77742f9185dbce3ff1f99fa2746d211bddb53530ef206"
+url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-linux-x64.tar.gz"
+
+[tools.node."platforms.linux-x64-musl"]
+checksum = "sha256:6ad2e7c0cf693fecc2febb1abf753940244f3baaa04626361ed52d64843ffc67"
+url = "https://unofficial-builds.nodejs.org/download/release/v26.3.0/node-v26.3.0-linux-x64-musl.tar.gz"
+
+[tools.node."platforms.macos-arm64"]
+checksum = "sha256:77ef7f7a15aa757c2ca19d63cf41c8d9eb3b18590ebc6883871310787d8c6b6c"
+url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-darwin-arm64.tar.gz"
+
+[tools.node."platforms.macos-x64"]
+checksum = "sha256:7453bd54a17bdc656e2e784d702f6eeb224fb517965e6f8c5a31a88c83d3804c"
+url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-darwin-x64.tar.gz"
+
+[tools.node."platforms.windows-x64"]
+checksum = "sha256:ec6d0f6b056c89498a9b26c4d5c77a31fd0b7fe45ba8a45fa87d26f66c3ebce4"
+url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-win-x64.zip"
