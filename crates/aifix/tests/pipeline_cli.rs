@@ -1155,7 +1155,10 @@ diff --git a/src/main.rs b/src/main.rs
     {
         let temp_dir = create_temp_dir("agda-status-only")?;
         let fixture = temp_dir.join("agda-status.txt");
-        fs::write(&fixture, "Checking Good (/workspace/agda/Good.agda).\n")?;
+        fs::write(
+            &fixture,
+            "Checking Internal.Everything (/workspace/agda/Everything.agda).\nFinished Internal.Everything.\n",
+        )?;
         let fixture = path_to_str(&fixture)?;
         let output = run_aifix([
             "pipeline",
@@ -1165,6 +1168,7 @@ diff --git a/src/main.rs b/src/main.rs
             "json",
             "--input",
             fixture,
+            "--fail-on-diagnostics",
         ])?;
         let digest = successful_json(output)?;
 
@@ -1186,6 +1190,53 @@ diff --git a/src/main.rs b/src/main.rs
                 .is_some_and(Vec::is_empty),
             || format!("status-only Agda output should retain no groups: {digest}"),
         )?;
+        Ok(())
+    }
+
+    /// Verifies that default protocol detection treats Agda progress as clean
+    /// status.
+    #[test]
+    fn agda_auto_pipeline_accepts_status_only_output() -> Result<(), Box<dyn Error>>
+    {
+        let temp_dir = create_temp_dir("agda-auto-status-only")?;
+        let fixture = temp_dir.join("agda-auto-status.txt");
+        fs::write(
+            &fixture,
+            "Checking Internal.Everything (/workspace/agda/Everything.agda).\nFinished Internal.Everything.\n",
+        )?;
+        let fixture = path_to_str(&fixture)?;
+        let output = run_aifix([
+            "pipeline",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+            "--fail-on-diagnostics",
+        ])?;
+        let stdout = successful_stdout(output)?;
+        let digest: Value = serde_json::from_str(&stdout)?;
+
+        require(
+            digest.pointer("/counts/total").and_then(Value::as_u64) == Some(0),
+            || format!("status-only Agda progress should have zero diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .pointer("/diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("status-only Agda progress should render no diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .pointer("/groups")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("status-only Agda progress should render no groups: {digest}"),
+        )?;
+        require(!stdout.contains("nushell"), || {
+            format!("status-only Agda progress should not render Nushell diagnostics: {stdout}")
+        })?;
         Ok(())
     }
 

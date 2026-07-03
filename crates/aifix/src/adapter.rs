@@ -536,19 +536,22 @@ fn split_code_message(rest: &str) -> Option<(String, String)>
     has_typescript_code.then_some((code, message))
 }
 
-/// Probe Agda text diagnostics when at least one Agda-shaped header is present.
+/// Probe Agda text diagnostics when at least one Agda-shaped line is present.
 ///
 /// # Contract
 /// - requires: `input` is non-empty UTF-8 text.
 /// - ensures: returns [`AutoProbe::NoMatch`] unless a complete Agda diagnostic
-///   header can be parsed; valid Agda diagnostics are normalized before generic
-///   text fallback.
-/// - fails: parser failures after an Agda header match become
+///   header or recognized Agda progress line can be parsed; valid Agda output
+///   is normalized before generic text fallback.
+/// - fails: parser failures after an Agda header or progress-line match become
 ///   [`AutoProbe::Invalid`].
 /// - panics: none.
 fn probe_agda_text(input: &str) -> AutoProbe
 {
-    if input.lines().any(|line| parse_agda_header(line).is_some()) {
+    if input
+        .lines()
+        .any(|line| parse_agda_header(line).is_some() || is_agda_status_line(line))
+    {
         AutoProbe::from_result(parse_agda_text(input))
     }
     else {
@@ -757,12 +760,54 @@ fn parse_agda_position(position: &str) -> Option<(u32, u32)>
 ///
 /// # Contract
 /// - requires: `line` is one logical Agda output line.
-/// - ensures: recognizes known progress lines that should not become diagnostic
-///   messages.
+/// - ensures: recognizes exact progress lines that should not become
+///   diagnostics or diagnostic messages.
 /// - panics: none.
 fn is_agda_status_line(line: &str) -> bool
 {
-    line.trim_start().starts_with("Checking ")
+    is_agda_checking_line(line) || is_agda_finished_line(line)
+}
+
+/// Return whether a line has Agda's `Checking <module> (<path>).` shape.
+///
+/// # Contract
+/// - requires: `line` is one logical Agda output line.
+/// - ensures: returns true only when both module and path fields are non-empty.
+/// - panics: none; all slicing uses checked split operations.
+fn is_agda_checking_line(line: &str) -> bool
+{
+    let Some(rest) = line.trim_end().strip_prefix("Checking ")
+    else {
+        return false;
+    };
+    let Some(rest) = rest.strip_suffix(").")
+    else {
+        return false;
+    };
+    let Some((module, path)) = rest.split_once(" (")
+    else {
+        return false;
+    };
+    !module.trim().is_empty() && !path.trim().is_empty()
+}
+
+/// Return whether a line has Agda's `Finished <module>.` shape.
+///
+/// # Contract
+/// - requires: `line` is one logical Agda output line.
+/// - ensures: returns true only when the module field is non-empty.
+/// - panics: none.
+fn is_agda_finished_line(line: &str) -> bool
+{
+    let Some(module) = line.trim_end().strip_prefix("Finished ")
+    else {
+        return false;
+    };
+    let Some(module) = module.strip_suffix('.')
+    else {
+        return false;
+    };
+    !module.trim().is_empty()
 }
 
 /// Parse LSP diagnostic arrays, wrapper objects, or publishDiagnostics params.

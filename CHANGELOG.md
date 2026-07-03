@@ -15,6 +15,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(config)_ Default to XDG config paths
 * _(agda)_ Add direct CLI diagnostic support
 
+### Fixed
+
+* _(agda)_ Ignore `Checking …` and `Finished …` progress lines during Agda text parsing and auto protocol detection
+
 ### Refactor
 
 * Align Rust contracts with Wyrd
