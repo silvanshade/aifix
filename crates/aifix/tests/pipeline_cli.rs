@@ -1093,6 +1093,180 @@ diff --git a/src/main.rs b/src/main.rs
         Ok(())
     }
 
+    /// Verifies that Agda multi-line source spans preserve both endpoints.
+    #[test]
+    fn agda_text_pipeline_preserves_multiline_span() -> Result<(), Box<dyn Error>>
+    {
+        let temp_dir = create_temp_dir("agda-multiline-span")?;
+        let fixture = temp_dir.join("agda.txt");
+        fs::write(
+            &fixture,
+            concat!(
+                "Checking Core.Polygraph (/workspace/agda/Polygraph.agda).\n",
+                "/workspace/agda/Polygraph.agda:138.49-386.26: error: ",
+                "[UnsolvedInteractionMetas]\n",
+                "Unsolved interaction metas at the following locations:\n",
+                "  /workspace/agda/Polygraph.agda:138.49-53\n",
+            ),
+        )?;
+        let fixture = path_to_str(&fixture)?;
+        let output = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+        ])?;
+        let digest = successful_json(output)?;
+        let span = digest.pointer("/diagnostics/0/spans/0").ok_or_else(|| {
+            std::io::Error::other(format!(
+                "Agda digest should contain a primary span: {digest}"
+            ))
+        })?;
+
+        require(
+            json_field_equals_str(&digest, "code", "UnsolvedInteractionMetas"),
+            || format!("Agda digest should preserve the multiline diagnostic code: {digest}"),
+        )?;
+        require(
+            span.get("line").and_then(Value::as_u64) == Some(138),
+            || format!("Agda span should preserve start line 138: {span}"),
+        )?;
+        require(
+            span.get("column").and_then(Value::as_u64) == Some(49),
+            || format!("Agda span should preserve start column 49: {span}"),
+        )?;
+        require(
+            span.get("end_line").and_then(Value::as_u64) == Some(386),
+            || format!("Agda span should preserve end line 386: {span}"),
+        )?;
+        require(
+            span.get("end_column").and_then(Value::as_u64) == Some(26),
+            || format!("Agda span should preserve end column 26: {span}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that status-only successful Agda output is accepted as clean.
+    #[test]
+    fn agda_text_pipeline_accepts_status_only_output() -> Result<(), Box<dyn Error>>
+    {
+        let temp_dir = create_temp_dir("agda-status-only")?;
+        let fixture = temp_dir.join("agda-status.txt");
+        fs::write(&fixture, "Checking Good (/workspace/agda/Good.agda).\n")?;
+        let fixture = path_to_str(&fixture)?;
+        let output = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+        ])?;
+        let digest = successful_json(output)?;
+
+        require(
+            digest.pointer("/counts/total").and_then(Value::as_u64) == Some(0),
+            || format!("status-only Agda output should have zero diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .pointer("/diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("status-only Agda output should retain no diagnostics: {digest}"),
+        )?;
+        require(
+            digest
+                .pointer("/groups")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
+            || format!("status-only Agda output should retain no groups: {digest}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that expected diagnostic codes make CLI gate mode selective.
+    #[test]
+    fn agda_pipeline_gate_honors_expected_codes() -> Result<(), Box<dyn Error>>
+    {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agda.txt");
+        let fixture = path_to_str(&fixture)?;
+
+        let failing = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+            "--fail-on-diagnostics",
+        ])?;
+        require(!failing.status.success(), || {
+            format!(
+                "Agda gate should fail without expected codes; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&failing.stdout),
+                String::from_utf8_lossy(&failing.stderr)
+            )
+        })?;
+        let failing_digest: Value = serde_json::from_slice(&failing.stdout)?;
+        require(json_contains_str(&failing_digest, "UnequalSorts"), || {
+            format!("failing Agda gate should still render diagnostics: {failing_digest}")
+        })?;
+        require(
+            String::from_utf8_lossy(&failing.stderr).contains("unexpected diagnostics"),
+            || {
+                format!(
+                    "failing Agda gate should explain the gate failure: {}",
+                    String::from_utf8_lossy(&failing.stderr)
+                )
+            },
+        )?;
+
+        let expected = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+            "--fail-on-diagnostics",
+            "--expected-code",
+            "UnequalSorts",
+            "--expected-code",
+            "FileNotFound",
+        ])?;
+        let expected_digest = successful_json(expected)?;
+        require(json_contains_str(&expected_digest, "UnequalSorts"), || {
+            format!("expected-code gate should keep allowed diagnostics visible: {expected_digest}")
+        })?;
+
+        let alias = run_aifix([
+            "pipeline",
+            "--protocol",
+            "agda-text",
+            "--format",
+            "json",
+            "--input",
+            fixture,
+            "--fail-on-diagnostics",
+            "--allow-code",
+            "UnequalSorts",
+            "--allow-code",
+            "FileNotFound",
+        ])?;
+        let alias_digest = successful_json(alias)?;
+        require(json_contains_str(&alias_digest, "FileNotFound"), || {
+            format!("allow-code alias gate should keep allowed diagnostics visible: {alias_digest}")
+        })?;
+        Ok(())
+    }
+
     /// Verifies that auto protocol detection recognizes Agda text diagnostics.
     #[test]
     fn auto_pipeline_detects_agda_text_before_generic_nushell() -> Result<(), Box<dyn Error>>

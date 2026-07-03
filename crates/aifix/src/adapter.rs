@@ -561,20 +561,23 @@ fn probe_agda_text(input: &str) -> AutoProbe
 /// # Contract
 /// - requires: `input` is UTF-8 Agda CLI diagnostic text.
 /// - ensures: ignores status lines, groups each Agda header with following
-///   non-header body lines, and returns `agda` diagnostics with one same-line
-///   span and the Agda tag preserved as the diagnostic code.
+///   non-header body lines, and returns `agda` diagnostics with a span and the
+///   Agda tag preserved as the diagnostic code. Status-only successful output
+///   yields zero diagnostics.
 /// - fails: returns a parser error when explicitly selected non-empty input has
-///   no Agda-shaped diagnostic headers.
+///   no Agda-shaped diagnostic headers and includes non-status output.
 /// - panics: none; malformed candidate headers are treated as non-matches.
 fn parse_agda_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
     let mut diagnostics = Vec::new();
     let mut current: Option<AgdaDiagnosticBuilder> = None;
+    let mut saw_non_status_line = false;
 
     for line in input.lines() {
         if is_agda_status_line(line) {
             continue;
         }
+        saw_non_status_line |= !line.trim().is_empty();
 
         if let Some(header) = parse_agda_header(line) {
             if let Some(builder) = current.take() {
@@ -591,15 +594,15 @@ fn parse_agda_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
         diagnostics.push(builder.finish());
     }
 
-    if diagnostics.is_empty() && !input.trim().is_empty() {
+    if diagnostics.is_empty() && saw_non_status_line {
         return Err(AifixError::parser(
             "agda text input did not contain Agda diagnostics",
         ));
     }
 
     debug_assert!(
-        input.trim().is_empty() || !diagnostics.is_empty(),
-        "non-empty successful Agda parsing must produce diagnostics"
+        input.trim().is_empty() || !diagnostics.is_empty() || !saw_non_status_line,
+        "non-empty successful Agda parsing must produce diagnostics or contain only status lines"
     );
     Ok(diagnostics)
 }
@@ -609,11 +612,13 @@ struct AgdaHeader
 {
     /// File path reported before the one-based source position.
     file: String,
-    /// One-based source line.
+    /// One-based source start line.
     line: u32,
     /// One-based inclusive start column.
     start_column: u32,
-    /// One-based same-line end column.
+    /// One-based source end line.
+    end_line: u32,
+    /// One-based inclusive end column.
     end_column: u32,
     /// Severity label reported by Agda.
     severity: Severity,
@@ -676,7 +681,7 @@ impl AgdaDiagnosticBuilder
             self.header.file,
             Some(self.header.line),
             Some(self.header.start_column),
-            Some(self.header.line),
+            Some(self.header.end_line),
             Some(self.header.end_column),
         );
 
@@ -693,6 +698,7 @@ impl AgdaDiagnosticBuilder
 /// # Contract
 /// - requires: `line` is one logical line of Agda CLI output.
 /// - ensures: returns parsed header fields only for `file:line.start-end:
+///   severity: [tag]` and `file:start-line.start-column-end-line.end-column:
 ///   severity: [tag]` lines.
 /// - fails: returns `None` for missing or invalid captures.
 /// - panics: none; all string slicing uses checked split operations.
@@ -706,14 +712,20 @@ fn parse_agda_header(line: &str) -> Option<AgdaHeader>
     if severity_text.is_empty() {
         return None;
     }
-    let (file_and_line, columns) = location.rsplit_once('.')?;
-    let (file, line_number) = file_and_line.rsplit_once(':')?;
-    let (start_column, end_column) = columns.split_once('-')?;
-    let line_number = parse_u32_str(line_number)?;
-    let start_column = parse_u32_str(start_column)?;
-    let end_column = parse_u32_str(end_column)?;
+    let (file, position_range) = location.rsplit_once(':')?;
+    let (start_position, end_position) = position_range.split_once('-')?;
+    let (line_number, start_column) = parse_agda_position(start_position)?;
+    let (end_line, end_column) = if end_position.contains('.') {
+        parse_agda_position(end_position)?
+    }
+    else {
+        (line_number, parse_u32_str(end_position)?)
+    };
     let file = non_empty_trimmed_owned(file)?;
-    if line_number == 0 || start_column == 0 || end_column == 0 || start_column > end_column {
+    if line_number == 0 || start_column == 0 || end_line == 0 || end_column == 0 {
+        return None;
+    }
+    if end_line < line_number || (end_line == line_number && start_column > end_column) {
         return None;
     }
 
@@ -721,10 +733,24 @@ fn parse_agda_header(line: &str) -> Option<AgdaHeader>
         file,
         line: line_number,
         start_column,
+        end_line,
         end_column,
         severity: line_severity(severity_text),
         tag,
     })
+}
+
+/// Parse a one-based Agda `line.column` position pair.
+///
+/// # Contract
+/// - requires: `position` is a candidate Agda source position.
+/// - ensures: returns parsed line and column when both are unsigned integers.
+/// - fails: returns `None` for missing or invalid captures.
+/// - panics: none.
+fn parse_agda_position(position: &str) -> Option<(u32, u32)>
+{
+    let (line, column) = position.split_once('.')?;
+    Some((parse_u32_str(line)?, parse_u32_str(column)?))
 }
 
 /// Return whether an Agda line is progress/status output rather than a body.

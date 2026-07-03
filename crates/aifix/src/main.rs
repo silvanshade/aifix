@@ -23,6 +23,7 @@ use aifix::error::AifixError;
 use aifix::explain::Explain;
 use aifix::explain::ExplainStatus;
 use aifix::explain::explain_code;
+use aifix::model::Digest;
 use aifix::model::Invocation;
 use aifix::model::OutputFormat;
 use aifix::model::Protocol;
@@ -144,6 +145,14 @@ struct PipelineCommand
     /// Maximum number of sample diagnostics retained in the digest.
     #[arg(long)]
     max_diagnostics: Option<usize>,
+
+    /// Diagnostic code allowed when `--fail-on-diagnostics` is active.
+    #[arg(long = "expected-code", alias = "allow-code")]
+    expected_codes: Vec<String>,
+
+    /// Exit non-zero when diagnostics outside the expected-code list remain.
+    #[arg(long)]
+    fail_on_diagnostics: bool,
 }
 
 /// Arguments for batch mode.
@@ -168,6 +177,14 @@ struct BatchCommand
     /// Maximum number of sample diagnostics retained in the digest.
     #[arg(long)]
     max_diagnostics: Option<usize>,
+
+    /// Diagnostic code allowed when `--fail-on-diagnostics` is active.
+    #[arg(long = "expected-code", alias = "allow-code")]
+    expected_codes: Vec<String>,
+
+    /// Exit non-zero when diagnostics outside the expected-code list remain.
+    #[arg(long)]
+    fail_on_diagnostics: bool,
 
     /// Extra profile arguments, or the full command argv for the custom
     /// profile.
@@ -268,6 +285,14 @@ enum CliError
         /// Zero-based position within the arguments after `--`.
         index: usize,
     },
+
+    /// Gate mode saw diagnostics outside the expected-code allow-list.
+    #[error("unexpected diagnostics remained after expected-code filtering: {count}")]
+    UnexpectedDiagnostics
+    {
+        /// Number of deduplicated unexpected diagnostics represented by groups.
+        count: usize,
+    },
 }
 
 impl FromStr for InputPath
@@ -320,9 +345,10 @@ impl From<CliOutputFormat> for OutputFormat
 /// # Contract
 /// - requires: `command` came from clap and may override discovered
 ///   configuration.
-/// - ensures: writes exactly one rendered digest to stdout on success.
-/// - fails: current directory, configuration, input, parser, digest, or stdout
-///   errors propagate.
+/// - ensures: writes exactly one rendered digest to stdout before enforcing any
+///   requested diagnostic gate.
+/// - fails: current directory, configuration, input, parser, digest, stdout, or
+///   diagnostic-gate errors propagate.
 /// - panics: debug assertion failure only if clap provides an empty non-stdin
 ///   input path.
 fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
@@ -346,12 +372,16 @@ fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
     let max_diagnostics = command
         .max_diagnostics
         .or(loaded_config.config.max_diagnostics);
-    let input = read_input(&command.input)?;
+    let input_path = command.input;
+    let expected_codes = command.expected_codes;
+    let fail_on_diagnostics = command.fail_on_diagnostics;
+    let input = read_input(&input_path)?;
     let diagnostics = parse_diagnostics(protocol, &input)?;
-    let invocation = Invocation::pipeline(protocol, command.input.raw);
+    let invocation = Invocation::pipeline(protocol, input_path.raw);
     let digest = build_digest(diagnostics, invocation, max_diagnostics);
 
-    write_digest(&digest, format)
+    write_digest(&digest, format)?;
+    enforce_diagnostic_gate(&digest, &expected_codes, fail_on_diagnostics)
 }
 
 /// Execute a configured profile, then write the digest returned by the library.
@@ -359,9 +389,10 @@ fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
 /// # Contract
 /// - requires: `command.profile` names either a configured profile or a custom
 ///   invocation.
-/// - ensures: writes exactly one rendered digest for the executed command.
+/// - ensures: writes exactly one rendered digest for the executed command
+///   before enforcing any requested diagnostic gate.
 /// - fails: current directory, configuration, child execution, parser, digest,
-///   or stdout errors propagate.
+///   stdout, or diagnostic-gate errors propagate.
 /// - panics: debug assertion failure only if clap provides an empty profile
 ///   name.
 fn run_batch(command: BatchCommand) -> Result<(), CliError>
@@ -402,6 +433,8 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
         .max_diagnostics
         .or(profile_max_diagnostics)
         .or(loaded_config.config.max_diagnostics);
+    let expected_codes = command.expected_codes;
+    let fail_on_diagnostics = command.fail_on_diagnostics;
     let extra_args = utf8_extra_args(command.extra_args)?;
     let digest = if let Some(profile) = profile_config {
         run_configured_profile(
@@ -423,7 +456,8 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
         )?
     };
 
-    write_digest(&digest, format)
+    write_digest(&digest, format)?;
+    enforce_diagnostic_gate(&digest, &expected_codes, fail_on_diagnostics)
 }
 
 /// Render one or more deterministic explanations.
@@ -591,6 +625,59 @@ fn utf8_extra_args(extra_args: Vec<OsString>) -> Result<Vec<String>, CliError>
     }
 
     Ok(utf8_args)
+}
+
+/// Enforce CLI diagnostic-gate options after rendering the digest.
+///
+/// # Contract
+/// - requires: `digest` was built from normalized diagnostics and
+///   `expected_codes` contains user-provided code labels.
+/// - ensures: returns success unless gate mode is active and at least one
+///   diagnostic group has no expected code.
+/// - fails: returns [`CliError::UnexpectedDiagnostics`] for unexpected groups.
+/// - panics: none.
+fn enforce_diagnostic_gate(
+    digest: &Digest,
+    expected_codes: &[String],
+    fail_on_diagnostics: bool,
+) -> Result<(), CliError>
+{
+    if !fail_on_diagnostics {
+        return Ok(());
+    }
+
+    let count = unexpected_diagnostic_count(digest, expected_codes);
+    if count == 0 {
+        Ok(())
+    }
+    else {
+        Err(CliError::UnexpectedDiagnostics { count })
+    }
+}
+
+/// Count deduplicated diagnostics not covered by expected code labels.
+///
+/// # Contract
+/// - requires: `digest.groups` was produced by digest construction.
+/// - ensures: sums represented group counts whose code is absent from
+///   `expected_codes`, treating code-less groups as unexpected.
+/// - panics: none.
+fn unexpected_diagnostic_count(
+    digest: &Digest,
+    expected_codes: &[String],
+) -> usize
+{
+    digest
+        .groups
+        .iter()
+        .filter(|group| {
+            !group
+                .code
+                .as_deref()
+                .is_some_and(|code| expected_codes.iter().any(|expected| expected == code))
+        })
+        .map(|group| group.count)
+        .sum()
 }
 
 /// Write a rendered digest to standard output.

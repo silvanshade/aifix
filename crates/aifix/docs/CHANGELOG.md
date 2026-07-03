@@ -25,6 +25,8 @@
 * Batch capture is bounded to 1 MiB per stream before UTF-8 conversion and invocation retention.
 * Batch extra args are rejected when they are not valid UTF-8.
 * Nonzero tool exits with parseable diagnostics can produce a digest; unparsable nonzero output remains a process error.
+* Agda direct CLI parsing now accepts same-line and multi-line diagnostic header locations, preserves multi-line span end positions, and treats status-only success output as zero diagnostics.
+* `pipeline` and `batch` gained diagnostic gate options: `--fail-on-diagnostics` fails only for diagnostics whose code is not allowed by repeated `--expected-code <CODE>`, while the rendered digest remains visible.
 * `auto` protocol rejects malformed structured-looking cargo JSON, complete JSON, LSP, or native `aifix` payloads instead of falling back to generic text.
 * TypeScript and LSP adapters reject blank required fields, and LSP rejects malformed or reversed ranges.
 * Digest duplicate identity excludes preserved raw payloads and uses normalized source, code, severity, message, spans, and suggestions.

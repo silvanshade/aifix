@@ -13,6 +13,7 @@ The crate contains package metadata, protocol adapters, the normalized model, di
 * Current source files under `src/`: `adapter.rs`, `batch.rs`, `config.rs`, `digest.rs`, `error.rs`, `explain.rs`, `lib.rs`, `main.rs`, `model.rs`, and `render.rs`.
 * Public modules in `lib.rs`: `adapter`, `batch`, `config`, `digest`, `error`, `explain`, `model`, and `render`.
 * CLI commands: `pipeline`, `batch`, `explain`, `config paths`, and `completions <shell>`.
+* CLI diagnostic gate options: `pipeline` and `batch` support `--fail-on-diagnostics` with repeated `--expected-code <CODE>` allow-list entries; the command renders the digest first and fails only when diagnostics outside the allow-list remain.
 * Current integration tests: `crates/aifix/tests/pipeline_cli.rs`.
 * Current fixtures: `crates/aifix/tests/fixtures/clippy.jsonl` and `crates/aifix/tests/fixtures/agda.txt`.
 * Current benchmark hook: `crates/aifix/benches/ingest.rs`, registering `clippy fixture parse and digest`.
@@ -21,8 +22,8 @@ The crate contains package metadata, protocol adapters, the normalized model, di
 Current integration tests in `pipeline_cli.rs` cover:
 
 * clippy JSON pipeline output as JSON digest;
-* Agda text pipeline and auto-detection output as JSON digests;
-* Agda batch profile execution through a real `agda` executable when available;
+* Agda text pipeline and auto-detection output as JSON digests, including direct CLI diagnostic spans and status-only success output;
+* Agda batch profile execution through a real `agda` executable when available, including expected-code diagnostic gating;
 * TypeScript text pipeline output as markdown guidance;
 * LSP JSON pipeline output as compact JSON digest;
 * custom batch command execution through a real executable;
@@ -38,6 +39,7 @@ Review hardening currently implemented:
 * parseable nonzero diagnostic output can still render a digest;
 * malformed structured-looking `auto` input is rejected at the structured boundary;
 * TypeScript and LSP adapters validate blank fields and invalid or reversed ranges;
+* Agda direct CLI parsing accepts same-line and multi-line diagnostic header locations, preserves normalized multi-line span end positions, and treats known status/progress-only output as zero diagnostics;
 * digest dedupe excludes raw payload identity while preserving raw payloads for full JSON evidence.
 
 ## designed direction
@@ -50,6 +52,7 @@ Out of scope for this crate:
 * network lookups while explaining diagnostic codes;
 * applying fixes directly to source files;
 * hiding nonzero tool exits when diagnostics are still parseable;
+* project-specific Agda source-policy sweeps, including multi-root orchestration or `--without-K` checks for a particular repository.
 * maintaining compatibility aliases for old CLI or data-model names.
 
 ## open decision
