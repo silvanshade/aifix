@@ -14,8 +14,16 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use aifix::adapter::parse_diagnostics;
+use aifix::batch::AUTO_PROFILE;
+use aifix::batch::available_profile_names;
+use aifix::batch::default_protocol_for_profile;
+use aifix::batch::is_known_profile;
+use aifix::batch::profile_catalog;
+use aifix::batch::render_profile_catalog;
+use aifix::batch::run_auto_profile;
 use aifix::batch::run_configured_profile;
 use aifix::batch::run_profile_with_limit;
+use aifix::batch::unknown_profile_message;
 use aifix::config::Config;
 use aifix::config::config_paths;
 use aifix::digest::build_digest;
@@ -113,11 +121,11 @@ enum Command
 {
     /// Ingest diagnostics from stdin or a file and render a digest.
     Pipeline(PipelineCommand),
-    /// Invoke a configured diagnostic tool profile and render a digest.
+    /// Invoke a diagnostic tool profile, defaulting to discovered `auto`.
     Batch(BatchCommand),
     /// Explain diagnostic codes without making network requests.
     Explain(ExplainCommand),
-    /// Inspect aifix configuration discovery details.
+    /// Inspect aifix configuration and discoverable batch profiles.
     #[command(subcommand)]
     Config(ConfigCommand),
     /// Run the Model Context Protocol server over newline-delimited stdio.
@@ -159,7 +167,8 @@ struct PipelineCommand
 #[derive(Debug, Args)]
 struct BatchCommand
 {
-    /// Profile name to execute: rust, typescript, agda, nushell, or custom.
+    /// Profile name to execute; omit to run discovered `auto`.
+    #[arg(default_value = AUTO_PROFILE)]
     profile: String,
 
     /// Protocol used to parse the invoked tool output.
@@ -186,8 +195,8 @@ struct BatchCommand
     #[arg(long)]
     fail_on_diagnostics: bool,
 
-    /// Extra profile arguments, or the full command argv for the custom
-    /// profile.
+    /// Extra profile arguments for named profiles, or full command argv for
+    /// `custom`; not accepted by `auto`.
     #[arg(last = true)]
     extra_args: Vec<OsString>,
 }
@@ -218,6 +227,22 @@ enum ConfigCommand
 {
     /// Print the user and project configuration paths considered by aifix.
     Paths,
+    /// List built-in and configured batch profiles discoverable from a cwd.
+    Profiles(ConfigProfilesCommand),
+}
+
+/// Arguments for batch profile discovery.
+#[derive(Debug, Args)]
+struct ConfigProfilesCommand
+{
+    /// Working directory used for configuration discovery and project-shape
+    /// detection.
+    #[arg(long)]
+    cwd: Option<Utf8PathBuf>,
+
+    /// Output representation for profile metadata.
+    #[arg(long, value_enum, default_value = "markdown")]
+    format: CliOutputFormat,
 }
 
 /// CLI spellings for supported input protocols.
@@ -384,38 +409,31 @@ fn run_pipeline(command: PipelineCommand) -> Result<(), CliError>
     enforce_diagnostic_gate(&digest, &expected_codes, fail_on_diagnostics)
 }
 
-/// Execute a configured profile, then write the digest returned by the library.
+/// Execute a batch profile, then write the digest returned by the library.
 ///
 /// # Contract
-/// - requires: `command.profile` names either a configured profile or a custom
-///   invocation.
-/// - ensures: writes exactly one rendered digest for the executed command
-///   before enforcing any requested diagnostic gate.
-/// - fails: current directory, configuration, child execution, parser, digest,
-///   stdout, or diagnostic-gate errors propagate.
+/// - requires: `command.profile` names `auto`, a configured profile, a known
+///   built-in profile, or `custom` with a command argv after `--`.
+/// - ensures: omitted profiles run `auto`; named profiles choose protocol from
+///   CLI, profile config, built-in default, global config, then `auto`.
+/// - fails: current directory, configuration, unknown profile, child execution,
+///   parser, digest, stdout, or diagnostic-gate errors propagate.
 /// - panics: debug assertion failure only if clap provides an empty profile
 ///   name.
 fn run_batch(command: BatchCommand) -> Result<(), CliError>
 {
     debug_assert!(
         !command.profile.is_empty(),
-        "clap should require a non-empty batch profile name"
+        "clap should provide the default auto batch profile name"
     );
     let cwd = match command.cwd {
         | Some(path) => path,
         | None => current_utf8_dir()?,
     };
     let loaded_config = Config::discover(&cwd)?;
-    let profile_config = loaded_config.config.profiles.get(&command.profile);
-    let protocol = command
-        .protocol
-        .map(Protocol::from)
-        .or_else(|| {
-            let profile = profile_config?;
-            profile.protocol
-        })
-        .or(loaded_config.config.default_protocol)
-        .unwrap_or(Protocol::Auto);
+    let config = &loaded_config.config;
+    let profile_name = command.profile;
+    let profile_config = config.profiles.get(&profile_name);
     let format = command
         .format
         .map(OutputFormat::from)
@@ -423,7 +441,7 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
             let profile = profile_config?;
             profile.format
         })
-        .or(loaded_config.config.default_format)
+        .or(config.default_format)
         .unwrap_or(OutputFormat::Markdown);
     let profile_max_diagnostics = match profile_config {
         | Some(profile) => profile.max_diagnostics,
@@ -432,28 +450,49 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
     let max_diagnostics = command
         .max_diagnostics
         .or(profile_max_diagnostics)
-        .or(loaded_config.config.max_diagnostics);
+        .or(config.max_diagnostics);
     let expected_codes = command.expected_codes;
     let fail_on_diagnostics = command.fail_on_diagnostics;
     let extra_args = utf8_extra_args(command.extra_args)?;
-    let digest = if let Some(profile) = profile_config {
-        run_configured_profile(
-            &command.profile,
-            profile,
-            &extra_args,
-            protocol,
-            &cwd,
-            max_diagnostics,
-        )?
+
+    let digest = if profile_name == AUTO_PROFILE {
+        if !extra_args.is_empty() {
+            return Err(AifixError::invalid_argument(auto_extra_args_message(config)).into());
+        }
+        run_auto_profile(config, &cwd, max_diagnostics)
     }
     else {
-        run_profile_with_limit(
-            &command.profile,
-            &extra_args,
-            protocol,
-            &cwd,
-            max_diagnostics,
-        )?
+        if profile_config.is_none() && !is_known_profile(&profile_name, config) {
+            return Err(AifixError::invalid_argument(unknown_profile_message(
+                &profile_name,
+                config,
+            ))
+            .into());
+        }
+        let protocol = command
+            .protocol
+            .map(Protocol::from)
+            .or_else(|| {
+                let profile = profile_config?;
+                profile.protocol
+            })
+            .or_else(|| default_protocol_for_profile(&profile_name))
+            .or(config.default_protocol)
+            .unwrap_or(Protocol::Auto);
+
+        if let Some(profile) = profile_config {
+            run_configured_profile(
+                &profile_name,
+                profile,
+                &extra_args,
+                protocol,
+                &cwd,
+                max_diagnostics,
+            )?
+        }
+        else {
+            run_profile_with_limit(&profile_name, &extra_args, protocol, &cwd, max_diagnostics)?
+        }
     };
 
     write_digest(&digest, format)?;
@@ -501,7 +540,8 @@ fn run_explain(command: ExplainCommand) -> Result<(), CliError>
 fn run_config(command: &ConfigCommand) -> Result<(), CliError>
 {
     match command {
-        | &ConfigCommand::Paths => write_config_paths(),
+        | ConfigCommand::Paths => write_config_paths(),
+        | ConfigCommand::Profiles(command) => write_config_profiles(command),
     }
 }
 
@@ -540,6 +580,60 @@ fn write_config_paths() -> Result<(), CliError>
     )?;
 
     Ok(())
+}
+
+/// Discover and render batch profile metadata for a requested working
+/// directory.
+///
+/// # Contract
+/// - requires: `command.cwd`, when present, is a UTF-8 path accepted by
+///   configuration discovery.
+/// - ensures: renders the catalog returned by the batch library in the
+///   requested format and writes it to stdout with a trailing newline.
+/// - fails: current directory, configuration discovery, catalog rendering, or
+///   stdout write errors propagate.
+/// - panics: none.
+fn write_config_profiles(command: &ConfigProfilesCommand) -> Result<(), CliError>
+{
+    let cwd = match &command.cwd {
+        | Some(path) => path.clone(),
+        | None => current_utf8_dir()?,
+    };
+    let loaded_config = Config::discover(&cwd)?;
+    let profiles = profile_catalog(&loaded_config.config, &cwd);
+    let rendered = render_profile_catalog(&profiles, command.format.into())?;
+    let mut stdout = io::stdout().lock();
+
+    if rendered.ends_with('\n') {
+        write!(stdout, "{rendered}")?;
+    }
+    else {
+        writeln!(stdout, "{rendered}")?;
+    }
+
+    Ok(())
+}
+
+/// Return the actionable error used when callers pass profile-specific
+/// arguments to `auto`.
+///
+/// # Contract
+/// - requires: `config` is the already-discovered runtime configuration.
+/// - ensures: names `auto`, explains why extra args are rejected, and lists
+///   profiles callers can choose when they need profile-specific arguments.
+/// - fails: allocation may abort through the global allocator; no recoverable
+///   error is returned.
+/// - panics: none.
+fn auto_extra_args_message(config: &Config) -> String
+{
+    let profiles = available_profile_names(config).join(", ");
+
+    format!(
+        "`{AUTO_PROFILE}` does not accept extra arguments after `--` because \
+         extra arguments are profile-specific. Use a named profile instead, \
+         such as one of: {profiles}. Discover profiles with \
+         `aifix config profiles --format json`."
+    )
 }
 
 /// Write one explanation block to standard output.
