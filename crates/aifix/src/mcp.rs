@@ -21,9 +21,16 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 
-use crate::adapter::parse_diagnostics;
+use crate::batch::AUTO_PROFILE;
+use crate::batch::available_profile_names;
+use crate::batch::default_protocol_for_profile;
+use crate::batch::is_known_profile;
+use crate::batch::profile_catalog;
+use crate::batch::render_profile_catalog;
+use crate::batch::run_auto_profile;
 use crate::batch::run_configured_profile;
 use crate::batch::run_profile_with_limit;
+use crate::batch::unknown_profile_message;
 use crate::cache::ReplayMode;
 use crate::cache::diagnostic_cache_path;
 use crate::cache::filter_unseen_and_save;
@@ -59,10 +66,12 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SERVER_INSTRUCTIONS: &str = concat!(
     "aifix normalizes diagnostics from parseable tool output; it does not invent fixes or apply changes ",
     "except explicit cached replay apply mode. Use aifix_pipeline for already-captured diagnostics, ",
-    "aifix_batch to run a configured profile, and treat parseable diagnostics from nonzero exits as findings ",
-    "rather than automatic operational failure. Use aifix_dedupe/aifix_guidance for repeated diagnostic triage. ",
-    "Use aifix_report_fix/aifix_replay_fixes only for explicitly recorded cached patch replay; respect suggest, ",
-    "dry-run, and apply modes. Verify repaired code with the native tools and tests that own it."
+    "aifix_batch_profiles to discover project profiles before choosing a profile, and aifix_batch with ",
+    "profile auto for project-wide diagnostics. Do not invent profile names or assume extraArgs are cargo flags; ",
+    "extraArgs are profile-specific and auto rejects them. Treat parseable diagnostics from nonzero exits as ",
+    "findings rather than automatic operational failure. Use aifix_dedupe/aifix_guidance for repeated diagnostic ",
+    "triage. Use aifix_report_fix/aifix_replay_fixes only for explicitly recorded cached patch replay; respect ",
+    "suggest, dry-run, and apply modes. Verify repaired code with the native tools and tests that own it."
 );
 
 /// Run the line-oriented stdio MCP server until stdin reaches EOF.
@@ -224,8 +233,13 @@ fn tools_list_result() -> Value
             ),
             tool_schema(
                 "aifix_batch",
-                "Run a configured diagnostic profile, then render its digest.",
+                "Run a named diagnostic profile, or omit profile/use auto for project-wide diagnostics; query aifix_batch_profiles when unsure and do not treat extraArgs as cargo flags.",
                 &batch_schema(),
+            ),
+            tool_schema(
+                "aifix_batch_profiles",
+                "List discoverable batch profiles and metadata for a cwd so agents can choose a valid profile instead of inventing one.",
+                &batch_profiles_schema(),
             ),
             tool_schema(
                 "aifix_report_fix",
@@ -292,16 +306,29 @@ fn batch_schema() -> Value
 {
     json!({
         "type": "object",
-        "required": ["profile"],
         "properties": {
-            "profile": { "type": "string" },
-            "extraArgs": { "type": "array", "items": { "type": "string" } },
+            "profile": { "type": "string", "default": AUTO_PROFILE, "description": "Profile name. Omit or pass an empty string to use auto." },
+            "extraArgs": { "type": "array", "items": { "type": "string" }, "description": "Profile-specific argv appended to named profiles; rejected for auto and not treated as cargo flags." },
             "cwd": { "type": "string" },
             "protocol": protocol_schema(),
             "format": format_schema(),
             "maxDiagnostics": { "type": "integer", "minimum": 0 },
             "dedupe": { "type": "boolean" },
             "recordMetrics": { "type": "boolean" },
+        },
+        "additionalProperties": false,
+    })
+}
+
+/// Build the batch profile discovery tool schema.
+#[must_use]
+fn batch_profiles_schema() -> Value
+{
+    json!({
+        "type": "object",
+        "properties": {
+            "cwd": { "type": "string" },
+            "format": format_schema(),
         },
         "additionalProperties": false,
     })
@@ -413,9 +440,8 @@ fn format_schema() -> Value
 #[must_use]
 fn tools_call_result(params: Option<&Value>) -> Value
 {
-    let result = dispatch_tool_call(params).and_then(tool_text);
-    match result {
-        | Ok(text) => tool_success(&text),
+    match dispatch_tool_call(params).and_then(tool_result) {
+        | Ok(result) => result,
         | Err(error) => tool_error(&error.to_string()),
     }
 }
@@ -435,6 +461,7 @@ fn dispatch_tool_call(params: Option<&Value>) -> Result<ToolOutput, AifixError>
     match call.name.as_str() {
         | "aifix_pipeline" => run_pipeline_tool(call.arguments),
         | "aifix_batch" => run_batch_tool(call.arguments),
+        | "aifix_batch_profiles" => run_batch_profiles_tool(call.arguments),
         | "aifix_report_fix" => run_report_fix_tool(call.arguments),
         | "aifix_replay_fixes" => run_replay_fixes_tool(call.arguments),
         | "aifix_dedupe" => run_dedupe_tool(call.arguments),
@@ -445,20 +472,30 @@ fn dispatch_tool_call(params: Option<&Value>) -> Result<ToolOutput, AifixError>
     }
 }
 
-/// Convert a successful tool output to display text.
+/// Convert a successful tool output to an MCP tool result.
 ///
 /// # Contract
 /// - requires: `output` was produced by a tool implementation.
 /// - ensures: digest output uses existing renderers; JSON output is serialized
-///   deterministically by `serde_json`.
+///   deterministically by `serde_json`; structured tool errors remain protocol
+///   successes with `isError: true`.
 /// - fails: JSON serialization failures are returned.
 /// - panics: none.
-fn tool_text(output: ToolOutput) -> Result<String, AifixError>
+fn tool_result(output: ToolOutput) -> Result<Value, AifixError>
 {
     match output {
-        | ToolOutput::Text(text) => Ok(text),
-        | ToolOutput::Digest { digest, format } => render_digest(&digest, format),
-        | ToolOutput::Json(value) => serde_json::to_string_pretty(&value).map_err(AifixError::from),
+        | ToolOutput::Text(text) => Ok(tool_success(&text)),
+        | ToolOutput::Digest { digest, format } => {
+            Ok(tool_success(&render_digest(&digest, format)?))
+        },
+        | ToolOutput::Json(value) => {
+            let text = serde_json::to_string_pretty(&value).map_err(AifixError::from)?;
+            Ok(tool_success(&text))
+        },
+        | ToolOutput::StructuredError {
+            text,
+            structured_content,
+        } => Ok(tool_structured_error(&text, structured_content)),
     }
 }
 
@@ -484,6 +521,23 @@ fn tool_error(text: &str) -> Value
             "type": "text",
             "text": text,
         }],
+        "isError": true,
+    })
+}
+
+/// Build an MCP tool error result with machine-readable structured content.
+#[must_use]
+fn tool_structured_error(
+    text: &str,
+    structured_content: Value,
+) -> Value
+{
+    json!({
+        "content": [{
+            "type": "text",
+            "text": text,
+        }],
+        "structuredContent": structured_content,
         "isError": true,
     })
 }
@@ -519,28 +573,33 @@ fn run_pipeline_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// Run the batch MCP tool.
 ///
 /// # Contract
-/// - requires: arguments contain a non-empty profile and optional runtime
-///   overrides.
-/// - ensures: mirrors CLI batch config resolution and applies requested cache
-///   side effects before rendering.
-/// - fails: returns configuration, process, parser, cache, or rendering setup
-///   errors.
+/// - requires: arguments may omit profile to request auto; optional runtime
+///   overrides must match the selected profile's contract.
+/// - ensures: mirrors CLI batch config resolution, defaults omitted or empty
+///   profile to auto, and applies requested cache side effects before
+///   rendering.
+/// - fails: returns configuration, process, parser, cache, rendering setup, or
+///   structured profile-selection errors.
 /// - panics: none.
 fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: BatchArgs = serde_json::from_value(arguments)?;
-    if args.profile.is_empty() {
-        return Err(AifixError::invalid_argument(
-            "batch profile must not be empty",
-        ));
-    }
     let cwd = resolve_project_root(args.cwd.as_deref())?;
     let loaded_config = Config::discover(&cwd)?;
-    let profile_config = loaded_config.config.profiles.get(&args.profile);
-    let protocol = parse_optional_protocol(args.protocol.as_deref())?
-        .or_else(|| profile_config?.protocol)
-        .or(loaded_config.config.default_protocol)
-        .unwrap_or(Protocol::Auto);
+    let profile = args
+        .profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or(AUTO_PROFILE);
+    if !is_known_profile(profile, &loaded_config.config) {
+        return Ok(unknown_profile_output(profile, &loaded_config.config));
+    }
+    if profile == AUTO_PROFILE && !args.extra_args.is_empty() {
+        return Ok(auto_extra_args_output(&loaded_config.config));
+    }
+
+    let profile_config = loaded_config.config.profiles.get(profile);
     let format = parse_optional_format(args.format.as_deref())?
         .or_else(|| profile_config?.format)
         .or(loaded_config.config.default_format)
@@ -550,30 +609,100 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         .max_diagnostics
         .or(profile_limit)
         .or(loaded_config.config.max_diagnostics);
-    let digest = if let Some(profile) = profile_config {
-        run_configured_profile(
-            &args.profile,
-            profile,
-            &args.extra_args,
-            protocol,
-            &cwd,
-            max_diagnostics,
-        )?
+    let mut digest = if profile == AUTO_PROFILE {
+        run_auto_profile(&loaded_config.config, &cwd, max_diagnostics)
     }
     else {
-        run_profile_with_limit(
-            &args.profile,
-            &args.extra_args,
-            protocol,
-            &cwd,
-            max_diagnostics,
-        )?
+        let protocol = parse_optional_protocol(args.protocol.as_deref())?
+            .or_else(|| profile_config?.protocol)
+            .or_else(|| default_protocol_for_profile(profile))
+            .or(loaded_config.config.default_protocol)
+            .unwrap_or(Protocol::Auto);
+        if let Some(profile_config) = profile_config {
+            run_configured_profile(
+                profile,
+                profile_config,
+                &args.extra_args,
+                protocol,
+                &cwd,
+                max_diagnostics,
+            )?
+        }
+        else {
+            run_profile_with_limit(profile, &args.extra_args, protocol, &cwd, max_diagnostics)?
+        }
     };
-    let diagnostics =
-        apply_optional_cache_updates(&cwd, digest.diagnostics, args.dedupe, args.record_metrics)?;
-    let digest = build_digest(diagnostics, digest.invocation, max_diagnostics);
+    if args.dedupe || args.record_metrics {
+        let diagnostics = apply_optional_cache_updates(
+            &cwd,
+            digest.diagnostics,
+            args.dedupe,
+            args.record_metrics,
+        )?;
+        let invocation = digest.invocation;
+        let profile_statuses = digest.profile_statuses;
+        digest = build_digest(diagnostics, invocation, max_diagnostics);
+        digest.profile_statuses = profile_statuses;
+    }
 
     Ok(ToolOutput::Digest { digest, format })
+}
+
+/// Run the batch profile discovery MCP tool.
+///
+/// # Contract
+/// - requires: arguments contain optional `cwd` and `format` fields.
+/// - ensures: discovers configuration from `cwd`, renders the shared profile
+///   catalog metadata with the same renderer used by the CLI, and performs no
+///   tool execution.
+/// - fails: returns argument, configuration, IO, or rendering setup errors.
+/// - panics: none.
+fn run_batch_profiles_tool(arguments: Value) -> Result<ToolOutput, AifixError>
+{
+    let args: BatchProfilesArgs = serde_json::from_value(arguments)?;
+    let cwd = resolve_project_root(args.cwd.as_deref())?;
+    let loaded_config = Config::discover(&cwd)?;
+    let format = parse_optional_format(args.format.as_deref())?.unwrap_or(OutputFormat::Markdown);
+    let profiles = profile_catalog(&loaded_config.config, &cwd);
+    let text = render_profile_catalog(&profiles, format)?;
+
+    Ok(ToolOutput::Text(text))
+}
+
+/// Build a structured unknown-profile MCP tool error.
+#[must_use]
+fn unknown_profile_output(
+    profile: &str,
+    config: &Config,
+) -> ToolOutput
+{
+    let text = unknown_profile_message(profile, config);
+    let available_profiles = available_profile_names(config);
+    ToolOutput::StructuredError {
+        text,
+        structured_content: json!({
+            "kind": "unknown-profile",
+            "profile": profile,
+            "available_profiles": available_profiles,
+            "recovery_hint": "Call aifix_batch_profiles for this cwd or run `aifix config profiles --format json` before choosing a profile.",
+        }),
+    }
+}
+
+/// Build a structured auto-extra-args MCP tool error.
+#[must_use]
+fn auto_extra_args_output(config: &Config) -> ToolOutput
+{
+    let available_profiles = available_profile_names(config);
+    ToolOutput::StructuredError {
+        text: "batch profile `auto` rejects extraArgs because argument semantics are profile-specific; choose a named profile from aifix_batch_profiles before passing extra arguments.".to_owned(),
+        structured_content: json!({
+            "kind": "auto-extra-args",
+            "profile": AUTO_PROFILE,
+            "available_profiles": available_profiles,
+            "recovery_hint": "Call aifix_batch_profiles, choose a concrete profile such as rust/typescript/agda/nushell/custom, then pass profile-specific extraArgs only to that profile.",
+        }),
+    }
 }
 
 /// Run the report-fix MCP tool.
@@ -888,6 +1017,14 @@ enum ToolOutput
     },
     /// JSON value to serialize as pretty text.
     Json(Value),
+    /// Tool-level error with machine-readable recovery details.
+    StructuredError
+    {
+        /// Human-readable error text.
+        text: String,
+        /// Machine-readable structuredContent payload.
+        structured_content: Value,
+    },
 }
 
 /// Arguments accepted by `aifix_pipeline`.
@@ -920,8 +1057,8 @@ struct PipelineArgs
 #[serde(rename_all = "camelCase")]
 struct BatchArgs
 {
-    /// Profile name to execute.
-    profile: String,
+    /// Profile name to execute; omitted or empty defaults to auto.
+    profile: Option<String>,
     /// Extra argv values appended to the selected profile.
     #[serde(default)]
     extra_args: Vec<String>,
@@ -939,6 +1076,17 @@ struct BatchArgs
     /// Whether to record diagnostic shape metrics.
     #[serde(default)]
     record_metrics: bool,
+}
+
+/// Arguments accepted by `aifix_batch_profiles`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchProfilesArgs
+{
+    /// Working directory for config discovery and project-shape detection.
+    cwd: Option<String>,
+    /// Optional profile catalog renderer override.
+    format: Option<String>,
 }
 
 /// Arguments accepted by `aifix_report_fix`.
