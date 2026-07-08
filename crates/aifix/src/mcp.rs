@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 
+use crate::adapter::parse_diagnostics;
 use crate::batch::AUTO_PROFILE;
 use crate::batch::available_profile_names;
 use crate::batch::default_protocol_for_profile;
