@@ -24,6 +24,10 @@ backend = "cargo:git-cliff"
 version = "0.113.1"
 backend = "cargo:nu"
 
+[[tools."cargo:prek"]]
+version = "0.4.8"
+backend = "cargo:prek"
+
 [[tools."cargo:rumdl"]]
 version = "0.2.28"
 backend = "cargo:rumdl"
@@ -31,6 +35,10 @@ backend = "cargo:rumdl"
 [[tools."cargo:typos-cli"]]
 version = "1.48.0"
 backend = "cargo:typos-cli"
+
+[[tools."cargo:worktrunk"]]
+version = "0.65.0"
+backend = "cargo:worktrunk"
 
 [[tools."cargo:zizmor"]]
 version = "1.26.1"

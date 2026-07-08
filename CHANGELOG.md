@@ -36,6 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Clarify incomplete bead workflow
 * Design syntax cache matching
 * Add project skill docs
+* Adopt the agentic-dev overlay and thin aifix guidance over the shared core
 
 ### Continuous Integration
 

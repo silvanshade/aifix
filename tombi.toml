@@ -1,0 +1,13 @@
+#:tombi toml-version = "v1.0.0"
+#:schema https://raw.githubusercontent.com/tombi-toml/tombi/refs/heads/main/www.schemastore.org/tombi.json
+
+# Keep vendored doctrine and in-repo agent worktrees out of standalone TOML walks;
+# they are foreign trees even when a walker does not apply gitignore scope.
+toml-version = "v1.0.0"
+
+[files]
+exclude = [
+  ".agents/core",
+  ".claude/worktrees",
+]
+respect-ignore-files = true

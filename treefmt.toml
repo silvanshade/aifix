@@ -5,6 +5,8 @@
 # rewrites. Source, docs, examples, and fixtures remain visible to formatters.
 excludes = [
   ".beads/**",
+  ".agents/core/**",
+  ".claude/worktrees/**",
   "build/**",
   "coverage/**",
   "dist/**",
@@ -18,7 +20,7 @@ excludes = [
 
 [formatter."conflict-markers"]
 command = "nu"
-options = ["scripts/check-conflict-markers.nu"]
+options = [".agents/core/scripts/check-conflict-markers.nu"]
 includes = [
   "*.json",
   "*.lock",

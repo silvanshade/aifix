@@ -1,0 +1,35 @@
+#:tombi toml-version = "v1.0.0"
+
+# Copy-basis: .agents/core/fragments/wt.base.toml.
+# Hook changes require `wt config approvals add`.
+[[pre-start]]
+mise-trust = "mise trust"
+
+[[pre-start]]
+wt-step-copy-gitignored = "wt step copy-ignored"
+
+[[pre-start]]
+beads-chmod = "chmod 0700 .beads"
+
+[[pre-start]]
+core-init = "git submodule update --init"
+
+[[pre-start]]
+beads-pull = "bd dolt pull || true"
+
+[pre-merge]
+# Aifix uses one legacy ADR file, not an ADR directory.
+adr-guard = "nu .agents/core/scripts/check-adr-on-main.nu --adr-path docs/ADR.md"
+core-pin = "nu .agents/core/scripts/check-core-pin.nu"
+treefmt = "mise run treefmt:check"
+docs-manifest-drift = "mise run docs:manifest-drift"
+cargo-build = "mise run cargo:build"
+cargo-clippy = "mise run cargo:clippy"
+cargo-nextest = "mise run cargo:nextest"
+beads = "bd dolt pull && bd dolt push"
+
+[post-merge]
+beads-pull = "bd dolt pull"
+
+[step.copy-ignored]
+exclude = [".beads/*.jsonl"]

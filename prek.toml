@@ -1,0 +1,109 @@
+#:tombi toml-version = "v1.0.0"
+#:schema https://www.schemastore.org/prek.json
+
+# Copy-basis: .agents/core/fragments/prek.base.toml.
+fail_fast = false
+default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
+
+[[repos]]
+repo = "local"
+
+# Core-backed base hooks.
+[[repos.hooks]]
+id = "prek-validate-config"
+name = "prek validate-config"
+language = "system"
+entry = "mise exec -- prek validate-config prek.toml"
+files.glob = ["prek.toml", "mise.toml", "mise.lock"]
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "no-machine-local-paths"
+name = "no machine-local paths in committed content"
+language = "system"
+entry = "mise exec -- nu .agents/core/scripts/check-machine-local-paths.nu"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "core-pin"
+name = "agentic-dev core submodule initialized, clean, at pin"
+language = "system"
+entry = "mise exec -- nu .agents/core/scripts/check-core-pin.nu"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "commitlint"
+name = "commitlint"
+entry = "mise x -- commitlint --edit"
+language = "system"
+stages = ["commit-msg"]
+always_run = true
+pass_filenames = true
+
+# Aifix pre-commit gates.
+[[repos.hooks]]
+id = "conflict-markers"
+name = "conflict-marker check"
+language = "system"
+entry = "mise exec -- nu .agents/core/scripts/check-conflict-markers.nu"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "treefmt-check"
+name = "treefmt --ci"
+language = "system"
+entry = "mise exec -- treefmt --ci"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "cargo-fmt-check"
+name = "cargo fmt --check"
+language = "system"
+entry = "mise exec -- cargo fmt --all -- --check"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "docs-manifest-drift"
+name = "docs manifest drift"
+language = "system"
+entry = "mise run docs:manifest-drift"
+files.glob = ["docs/**"]
+pass_filenames = false
+stages = ["pre-commit"]
+
+# Aifix pre-push gates.
+[[repos.hooks]]
+id = "cargo-build"
+name = "cargo build"
+language = "system"
+entry = "mise run cargo:build"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy"
+language = "system"
+entry = "mise run cargo:clippy"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "cargo-nextest"
+name = "cargo nextest"
+language = "system"
+entry = "mise run cargo:nextest"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]

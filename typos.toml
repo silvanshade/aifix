@@ -1,5 +1,18 @@
 #:schema https://raw.githubusercontent.com/crate-ci/typos/master/config.schema.json
 
+[files]
+# Vendored agentic-dev core and in-repo agent worktrees are foreign trees
+# (agentic-dev core/HAZARDS.md H13). node_modules is generated.
+extend-exclude = [
+  ".agents/core/",
+  ".claude/worktrees/",
+  "node_modules/",
+]
+
+[default]
+# Beads issue IDs and short git hashes are identifiers, not prose.
+extend-ignore-re = ['\baifix-[0-9a-z]+\b', '\b[0-9a-f]{7,40}\b']
+
 [default.extend-words]
 # Intentional misspelling used in fix-cache replay fixtures.
 lenght = "lenght"

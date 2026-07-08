@@ -1,9 +1,13 @@
 
-# beads / dolt files (added by bd init)
+# mise local opt-in environment selector (created by `mise run dev:enable`).
+.miserc.toml
+
+# beads / dolt files (added by bd init; agentic-dev gitignore.beads.base)
 .dolt/
 *.db
 .beads/*.jsonl
 .beads-credential-key
+.beads/hooks/
 
 # rust and build artifacts
 target/
@@ -13,6 +17,11 @@ coverage/
 
 # generated dependency stores
 node_modules/
+
+# agent worktrees and local analysis caches (agentic-dev H13)
+.claude/worktrees/
+.codegraph/
+.aifix/
 
 # user notes
 .notes
