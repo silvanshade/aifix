@@ -18,6 +18,7 @@ mod tests
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 
+    use directories::ProjectDirs;
     use serde_json::Value;
     use serde_json::json;
 
@@ -1800,12 +1801,20 @@ diff --git a/src/main.rs b/src/main.rs
         Ok(())
     }
 
-    /// Verifies that platform-native mode opts out of the default XDG path.
+    /// Verifies that platform-native mode reports the `ProjectDirs` user config
+    /// candidate.
     #[test]
-    fn platform_native_config_dir_mode_omits_default_xdg_user_path() -> Result<(), Box<dyn Error>>
+    fn platform_native_config_dir_mode_reports_project_dirs_user_path() -> Result<(), Box<dyn Error>>
     {
         let xdg_home = create_temp_dir("xdg-config-native-mode")?;
-        let default_xdg_path = xdg_home.join("aifix").join("aifix.toml");
+        let expected_user_line = match ProjectDirs::from("dev", "aifix", "aifix") {
+            | Some(project_dirs) => {
+                let expected = project_dirs.config_dir().join("aifix.toml");
+                let expected = path_to_str(&expected)?;
+                format!("user: {expected}")
+            },
+            | None => "user: -".to_owned(),
+        };
         let output = run_aifix_with_env(
             [OsStr::new("config"), OsStr::new("paths")],
             [
@@ -1818,13 +1827,17 @@ diff --git a/src/main.rs b/src/main.rs
             &[],
         )?;
         let stdout = successful_stdout(output)?;
-        let default_xdg_path = path_to_str(&default_xdg_path)?;
 
-        require(!stdout.contains(default_xdg_path), || {
-            format!(
-                "platform-native mode should not report the default XDG user path {default_xdg_path}: {stdout}"
-            )
-        })?;
+        require(
+            stdout
+                .lines()
+                .any(|line| line == expected_user_line.as_str()),
+            || {
+                format!(
+                    "platform-native mode should report the ProjectDirs user path {expected_user_line}: {stdout}"
+                )
+            },
+        )?;
         Ok(())
     }
 
