@@ -496,7 +496,7 @@ fn tool_result(output: ToolOutput) -> Result<Value, AifixError>
         | ToolOutput::StructuredError {
             text,
             structured_content,
-        } => Ok(tool_structured_error(&text, structured_content)),
+        } => Ok(tool_structured_error(&text, &structured_content)),
     }
 }
 
@@ -530,7 +530,7 @@ fn tool_error(text: &str) -> Value
 #[must_use]
 fn tool_structured_error(
     text: &str,
-    structured_content: Value,
+    structured_content: &Value,
 ) -> Value
 {
     json!({
@@ -605,7 +605,7 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         .or_else(|| profile_config?.format)
         .or(loaded_config.config.default_format)
         .unwrap_or(OutputFormat::Markdown);
-    let profile_limit = profile_config.and_then(|profile| profile.max_diagnostics);
+    let profile_limit = profile_config.and_then(|config| config.max_diagnostics);
     let max_diagnostics = args
         .max_diagnostics
         .or(profile_limit)
