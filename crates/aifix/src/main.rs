@@ -539,9 +539,9 @@ fn run_explain(command: ExplainCommand) -> Result<(), CliError>
 /// - panics: none.
 fn run_config(command: &ConfigCommand) -> Result<(), CliError>
 {
-    match command {
+    match *command {
         | ConfigCommand::Paths => write_config_paths(),
-        | ConfigCommand::Profiles(command) => write_config_profiles(command),
+        | ConfigCommand::Profiles(ref command) => write_config_profiles(command),
     }
 }
 
@@ -595,7 +595,7 @@ fn write_config_paths() -> Result<(), CliError>
 /// - panics: none.
 fn write_config_profiles(command: &ConfigProfilesCommand) -> Result<(), CliError>
 {
-    let cwd = match &command.cwd {
+    let cwd = match command.cwd.as_ref() {
         | Some(path) => path.clone(),
         | None => current_utf8_dir()?,
     };
