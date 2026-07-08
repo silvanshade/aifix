@@ -131,7 +131,7 @@ mod tests
     /// JSON parse errors from the MCP subprocess boundary.
     fn run_mcp(requests: &[Value]) -> Result<McpOutput, Box<dyn Error>>
     {
-        run_mcp_with_env(requests, std::iter::empty::<(&OsStr, &OsStr)>(), &[])
+        run_mcp_with_env(requests, core::iter::empty::<(&OsStr, &OsStr)>(), &[])
     }
 
     /// Runs the MCP server with scoped environment bindings.
@@ -629,10 +629,10 @@ mod tests
     }
 
     /// Returns one profile metadata object by stable profile name.
-    fn profile_named<'a>(
-        catalog: &'a Value,
+    fn profile_named<'catalog>(
+        catalog: &'catalog Value,
         name: &str,
-    ) -> Result<&'a Value, Box<dyn Error>>
+    ) -> Result<&'catalog Value, Box<dyn Error>>
     {
         let profiles = catalog.as_array().ok_or_else(|| {
             std::io::Error::other(format!("profile catalog should be a JSON array: {catalog}"))
@@ -649,10 +649,10 @@ mod tests
     }
 
     /// Returns one `batch auto` profile status by stable profile name.
-    fn profile_status_named<'a>(
-        digest: &'a Value,
+    fn profile_status_named<'digest>(
+        digest: &'digest Value,
         name: &str,
-    ) -> Result<&'a Value, Box<dyn Error>>
+    ) -> Result<&'digest Value, Box<dyn Error>>
     {
         let statuses = digest
             .get("profile_statuses")
@@ -2263,7 +2263,12 @@ diff --git a/src/main.rs b/src/main.rs
                     || format!("failed TypeScript status should report error_kind: {typescript}"),
                 )?;
             },
-            | _ => unreachable!("state was validated above"),
+            | _ => {
+                return Err(std::io::Error::other(format!(
+                    "typescript state should be ran or failed after validation: {typescript_state}"
+                ))
+                .into());
+            },
         }
         Ok(())
     }
