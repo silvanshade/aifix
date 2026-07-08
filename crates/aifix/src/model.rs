@@ -604,6 +604,47 @@ pub struct Group
     pub explain: Explain,
 }
 
+/// Outcome state for one profile considered by `batch auto`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileRunState
+{
+    /// The profile command ran and its output was parsed into diagnostics.
+    Ran,
+    /// The profile was considered but not applicable to the current project.
+    Skipped,
+    /// The profile was selected but failed before producing a parseable digest.
+    Failed,
+}
+
+/// Metadata describing one profile considered by `batch auto`.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileRunStatus
+{
+    /// Profile name as selected by auto discovery.
+    pub profile: String,
+    /// Outcome for this profile.
+    pub state: ProfileRunState,
+    /// Protocol used or planned for parsing the profile output.
+    pub protocol: Protocol,
+    /// Human-readable command family, normally the executable name.
+    pub command_family: String,
+    /// Number of diagnostics produced by a successful run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic_count: Option<usize>,
+    /// Stable best-effort failure category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// Human-readable failure text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Human-readable skip or selection reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Complete normalized digest emitted by pipeline and batch modes.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -617,6 +658,9 @@ pub struct Digest
     pub groups: Vec<Group>,
     /// Full deduplicated diagnostic list.
     pub diagnostics: Vec<Diagnostic>,
+    /// Per-profile status metadata for `batch auto` runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profile_statuses: Vec<ProfileRunStatus>,
 }
 
 impl Digest

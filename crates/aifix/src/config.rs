@@ -85,6 +85,9 @@ pub struct ProfileConfig
     /// Profile-specific sample cap.
     #[serde(default)]
     pub max_diagnostics: Option<usize>,
+    /// Whether this configured profile participates in `batch auto`.
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// Configuration plus the paths that contributed to it.
@@ -234,6 +237,9 @@ impl ProfileConfig
         }
         if other.max_diagnostics.is_some() {
             self.max_diagnostics = other.max_diagnostics;
+        }
+        if other.auto {
+            self.auto = true;
         }
     }
 }

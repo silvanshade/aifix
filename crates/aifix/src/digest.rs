@@ -78,6 +78,7 @@ pub fn build_digest(
         counts,
         groups,
         diagnostics: deduped,
+        profile_statuses: Vec::new(),
     }
 }
 

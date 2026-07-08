@@ -127,6 +127,43 @@ fn render_markdown(digest: &Digest) -> String
         markdown.push_str(&count.to_string());
         markdown.push('\n');
     }
+    if !digest.profile_statuses.is_empty() {
+        markdown.push_str("\n## Profile statuses\n\n");
+        for status in &digest.profile_statuses {
+            markdown.push_str("- `");
+            markdown.push_str(&status.profile);
+            markdown.push_str("`: ");
+            markdown.push_str(match status.state {
+                | crate::model::ProfileRunState::Ran => "ran",
+                | crate::model::ProfileRunState::Skipped => "skipped",
+                | crate::model::ProfileRunState::Failed => "failed",
+            });
+            markdown.push_str(" (protocol `");
+            markdown.push_str(status.protocol.as_str());
+            markdown.push_str("`, command family `");
+            markdown.push_str(&status.command_family);
+            markdown.push_str("`)");
+            if let Some(count) = status.diagnostic_count {
+                markdown.push_str(": ");
+                markdown.push_str(&count.to_string());
+                markdown.push_str(" diagnostics");
+            }
+            if let Some(reason) = status.reason.as_deref() {
+                markdown.push_str(" — ");
+                markdown.push_str(reason);
+            }
+            if let Some(error_kind) = status.error_kind.as_deref() {
+                markdown.push_str(" [");
+                markdown.push_str(error_kind);
+                markdown.push(']');
+            }
+            if let Some(error) = status.error.as_deref() {
+                markdown.push_str(": ");
+                markdown.push_str(&error.replace('\n', " "));
+            }
+            markdown.push('\n');
+        }
+    }
 
     markdown.push_str("\n## Groups\n");
     for group in &digest.groups {
@@ -190,6 +227,9 @@ struct CompactDigest<'digest>
     invocation: CompactInvocation<'digest>,
     /// Preserved aggregate counts.
     counts: &'digest Counts,
+    /// Profile status metadata for auto runs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    profile_statuses: &'digest Vec<crate::model::ProfileRunStatus>,
     /// Compact grouped diagnostics.
     groups: Vec<CompactGroup<'digest>>,
 }
@@ -214,6 +254,7 @@ impl<'digest> CompactDigest<'digest>
         Self {
             invocation: CompactInvocation::new(&digest.invocation),
             counts: &digest.counts,
+            profile_statuses: &digest.profile_statuses,
             groups: digest
                 .groups
                 .iter()
