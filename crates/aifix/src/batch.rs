@@ -29,9 +29,18 @@ use crate::model::ProfileRunState;
 use crate::model::ProfileRunStatus;
 use crate::model::Protocol;
 
+/// Built-in Rust profile executable and command family.
+const RUST_COMMAND_FAMILY: &str = "cargo";
+/// Built-in TypeScript profile executable and command family.
+const TYPESCRIPT_COMMAND_FAMILY: &str = "tsc";
+/// Built-in Agda profile executable and command family.
+const AGDA_COMMAND_FAMILY: &str = "agda";
+/// Built-in Nushell profile executable and command family.
+const NUSHELL_COMMAND_FAMILY: &str = "nu-lint";
+
 /// Built-in Rust profile command.
 const RUST_COMMAND: &[&str] = &[
-    "cargo",
+    RUST_COMMAND_FAMILY,
     "clippy",
     "--quiet",
     "--message-format=json",
@@ -43,13 +52,13 @@ const RUST_COMMAND: &[&str] = &[
 ];
 
 /// Built-in TypeScript profile command.
-const TYPESCRIPT_COMMAND: &[&str] = &["tsc", "--noEmit", "--pretty", "false"];
+const TYPESCRIPT_COMMAND: &[&str] = &[TYPESCRIPT_COMMAND_FAMILY, "--noEmit", "--pretty", "false"];
 
 /// Built-in Agda profile command.
-const AGDA_COMMAND: &[&str] = &["agda", "--no-libraries"];
+const AGDA_COMMAND: &[&str] = &[AGDA_COMMAND_FAMILY, "--no-libraries"];
 
 /// Built-in Nushell profile command.
-const NUSHELL_COMMAND: &[&str] = &["nu-lint"];
+const NUSHELL_COMMAND: &[&str] = &[NUSHELL_COMMAND_FAMILY];
 
 /// Synthetic profile name that runs every detected defaultable profile.
 pub const AUTO_PROFILE: &str = "auto";
@@ -69,6 +78,7 @@ const DETECTION_ENTRY_LIMIT: usize = 4096;
 
 /// Discoverable batch profile metadata shared by CLI and MCP surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
 pub struct BatchProfileInfo
 {
     /// Stable profile name accepted by batch mode.
@@ -102,6 +112,7 @@ pub struct BatchProfileInfo
 /// - fails: none; unreadable directories are treated as not detected.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn profile_catalog(
     config: &Config,
     cwd: &Utf8Path,
@@ -126,6 +137,7 @@ pub fn profile_catalog(
 /// - fails: none.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn available_profile_names(config: &Config) -> Vec<String>
 {
     let mut names = built_in_profile_names()
@@ -149,6 +161,7 @@ pub fn available_profile_names(config: &Config) -> Vec<String>
 /// - fails: none.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn is_known_profile(
     name: &str,
     config: &Config,
@@ -177,6 +190,7 @@ pub fn is_known_profile(
 ///   error is returned.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn unknown_profile_message(
     name: &str,
     config: &Config,
@@ -197,6 +211,7 @@ pub fn unknown_profile_message(
 /// - fails: none.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn default_protocol_for_profile(name: &str) -> Option<Protocol>
 {
     match name {
@@ -221,6 +236,7 @@ pub fn default_protocol_for_profile(name: &str) -> Option<Protocol>
 ///
 /// # Errors
 /// Returns an error when JSON serialization fails.
+#[inline]
 pub fn render_profile_catalog(
     profiles: &[BatchProfileInfo],
     format: OutputFormat,
@@ -244,6 +260,7 @@ pub fn render_profile_catalog(
 ///   the returned digest status metadata.
 /// - panics: none.
 #[must_use]
+#[inline]
 pub fn run_auto_profile(
     config: &Config,
     cwd: &Utf8Path,
@@ -542,12 +559,10 @@ fn built_in_profile_catalog(
     built_in_profile_names()
         .iter()
         .map(|name| {
-            if let Some(profile) = config.profiles.get(*name) {
-                configured_profile_info(name, profile, cwd)
-            }
-            else {
-                built_in_profile_info(name, cwd)
-            }
+            config.profiles.get(*name).map_or_else(
+                || built_in_profile_info(name, cwd),
+                |profile| configured_profile_info(name, profile, cwd),
+            )
         })
         .collect()
 }
@@ -634,12 +649,12 @@ fn run_auto_selected_profile(
     cwd: &Utf8Path,
 ) -> Result<Digest, AifixError>
 {
-    if let Some(configured) = config.profiles.get(&profile.name) {
-        run_configured_profile(&profile.name, configured, &[], profile.protocol, cwd, None)
-    }
-    else {
-        run_profile_with_limit(&profile.name, &[], profile.protocol, cwd, None)
-    }
+    config.profiles.get(&profile.name).map_or_else(
+        || run_profile_with_limit(&profile.name, &[], profile.protocol, cwd, None),
+        |configured| {
+            run_configured_profile(&profile.name, configured, &[], profile.protocol, cwd, None)
+        },
+    )
 }
 
 /// Render profile metadata as Markdown.
@@ -649,7 +664,7 @@ fn render_profile_catalog_markdown(profiles: &[BatchProfileInfo]) -> String
     for profile in profiles {
         markdown.push_str("- `");
         markdown.push_str(&profile.name);
-        markdown.push_str("`");
+        markdown.push('`');
         if !profile.aliases.is_empty() {
             markdown.push_str(" (aliases: ");
             markdown.push_str(&profile.aliases.join(", "));
@@ -686,10 +701,10 @@ fn aliases_for_profile(name: &str) -> Vec<String>
 fn command_family_for_profile(name: &str) -> String
 {
     match name {
-        | RUST_PROFILE => RUST_COMMAND[0],
-        | TYPESCRIPT_PROFILE | "ts" => TYPESCRIPT_COMMAND[0],
-        | AGDA_PROFILE => AGDA_COMMAND[0],
-        | NUSHELL_PROFILE | "nu" => NUSHELL_COMMAND[0],
+        | RUST_PROFILE => RUST_COMMAND_FAMILY,
+        | TYPESCRIPT_PROFILE | "ts" => TYPESCRIPT_COMMAND_FAMILY,
+        | AGDA_PROFILE => AGDA_COMMAND_FAMILY,
+        | NUSHELL_PROFILE | "nu" => NUSHELL_COMMAND_FAMILY,
         | AUTO_PROFILE => AUTO_PROFILE,
         | CUSTOM_PROFILE => CUSTOM_PROFILE,
         | other => other,
@@ -797,11 +812,9 @@ fn detect_recursive_extensions(
                     stack.push(path);
                 }
             }
-            else if file_type.is_file()
-                && extensions.iter().any(|extension| {
-                    name == format!(".{extension}") || name.ends_with(&format!(".{extension}"))
-                })
-            {
+            else if extensions.iter().any(|extension| {
+                name == format!(".{extension}") || name.ends_with(&format!(".{extension}"))
+            }) {
                 return (true, found_reason.to_owned());
             }
         }
@@ -821,17 +834,17 @@ fn should_skip_detection_dir(name: &str) -> bool
 /// Classify an operational profile error for structured auto status metadata.
 fn classify_error(error: &AifixError) -> &'static str
 {
-    match error {
-        | AifixError::InvalidArgument(message) if message.contains("unknown batch profile") => {
+    match *error {
+        | AifixError::InvalidArgument(ref message) if message.contains("unknown batch profile") => {
             "invalid-profile"
         },
         | AifixError::InvalidArgument(_) => "invalid-profile",
-        | AifixError::Process(message)
+        | AifixError::Process(ref message)
             if message.contains("failed to run") && message.contains("No such file") =>
         {
             "tool-unavailable"
         },
-        | AifixError::Process(message) if message.contains("output was not parseable") => {
+        | AifixError::Process(ref message) if message.contains("output was not parseable") => {
             "parse-failure"
         },
         | AifixError::Process(_) | AifixError::Io { .. } => "command-invocation",
