@@ -11,6 +11,9 @@ dist/
 build/
 coverage/
 
+# generated dependency stores
+node_modules/
+
 # user notes
 .notes
 
