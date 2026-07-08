@@ -88,6 +88,22 @@ mod tests
         Ok(command.output()?)
     }
 
+    /// Runs the binary with an isolated XDG-style user configuration root.
+    fn run_aifix_with_isolated_config<I, S>(
+        args: I,
+        xdg_config_home: &Path,
+    ) -> Result<Output, Box<dyn Error>>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        run_aifix_with_env(
+            args,
+            [(OsStr::new("XDG_CONFIG_HOME"), xdg_config_home.as_os_str())],
+            &["AIFIX_CONFIG_DIR_MODE", "HOME"],
+        )
+    }
+
     /// Captured MCP subprocess transcript used by stdio integration tests.
     struct McpOutput
     {
@@ -115,8 +131,43 @@ mod tests
     /// JSON parse errors from the MCP subprocess boundary.
     fn run_mcp(requests: &[Value]) -> Result<McpOutput, Box<dyn Error>>
     {
-        let mut child = Command::new(binary_path())
-            .arg("mcp")
+        run_mcp_with_env(requests, std::iter::empty::<(&OsStr, &OsStr)>(), &[])
+    }
+
+    /// Runs the MCP server with scoped environment bindings.
+    ///
+    /// # Contract
+    /// - requires: Cargo exposed a runnable `aifix` binary and `requests`
+    ///   contains JSON-RPC objects.
+    /// - ensures: applies environment removals and bindings before launching
+    ///   the server, then preserves the same transcript guarantees as
+    ///   [`run_mcp`].
+    /// - fails: returns process, stdin, non-zero exit, UTF-8, empty-response,
+    ///   or JSON parse errors.
+    /// - panics: none.
+    ///
+    /// # Errors
+    ///
+    /// Returns process, stdin-write, non-zero-exit, UTF-8, empty-response, or
+    /// JSON parse errors from the MCP subprocess boundary.
+    fn run_mcp_with_env<I, K, V>(
+        requests: &[Value],
+        envs: I,
+        removed_envs: &[&str],
+    ) -> Result<McpOutput, Box<dyn Error>>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let mut command = Command::new(binary_path());
+        command.arg("mcp");
+        for name in removed_envs {
+            command.env_remove(name);
+        }
+        command.envs(envs);
+
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -165,6 +216,19 @@ mod tests
             format!("MCP subprocess should emit at least one response; stderr: {stderr}")
         })?;
         Ok(McpOutput { responses, stderr })
+    }
+
+    /// Runs the MCP server with an isolated XDG-style user configuration root.
+    fn run_mcp_with_isolated_config(
+        requests: &[Value],
+        xdg_config_home: &Path,
+    ) -> Result<McpOutput, Box<dyn Error>>
+    {
+        run_mcp_with_env(
+            requests,
+            [(OsStr::new("XDG_CONFIG_HOME"), xdg_config_home.as_os_str())],
+            &["AIFIX_CONFIG_DIR_MODE", "HOME"],
+        )
     }
 
     /// Builds the JSON-RPC initialize request shared by MCP integration tests.
@@ -378,6 +442,25 @@ mod tests
         Ok(path)
     }
 
+    /// Writes a minimal Cargo package that `cargo clippy` can inspect without
+    /// fetching dependencies.
+    fn write_minimal_cargo_package(root: &Path) -> Result<(), Box<dyn Error>>
+    {
+        fs::write(
+            root.join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"aifix-fixture\"\n",
+                "version = \"0.0.0\"\n",
+                "edition = \"2021\"\n"
+            ),
+        )?;
+        let src = root.join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(src.join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")?;
+        Ok(())
+    }
+
     /// Converts successful command output into a UTF-8 string.
     ///
     /// # Contract
@@ -545,6 +628,51 @@ mod tests
         false
     }
 
+    /// Returns one profile metadata object by stable profile name.
+    fn profile_named<'a>(
+        catalog: &'a Value,
+        name: &str,
+    ) -> Result<&'a Value, Box<dyn Error>>
+    {
+        let profiles = catalog.as_array().ok_or_else(|| {
+            std::io::Error::other(format!("profile catalog should be a JSON array: {catalog}"))
+        })?;
+        profiles
+            .iter()
+            .find(|profile| profile.get("name").and_then(Value::as_str) == Some(name))
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "profile catalog should include profile {name:?}: {catalog}"
+                ))
+                .into()
+            })
+    }
+
+    /// Returns one `batch auto` profile status by stable profile name.
+    fn profile_status_named<'a>(
+        digest: &'a Value,
+        name: &str,
+    ) -> Result<&'a Value, Box<dyn Error>>
+    {
+        let statuses = digest
+            .get("profile_statuses")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "auto digest should include profile_statuses array: {digest}"
+                ))
+            })?;
+        statuses
+            .iter()
+            .find(|status| status.get("profile").and_then(Value::as_str) == Some(name))
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "auto digest should include status for profile {name:?}: {digest}"
+                ))
+                .into()
+            })
+    }
+
     /// Converts a filesystem path into the UTF-8 CLI path expected by `aifix`.
     fn path_to_str(path: &Path) -> Result<&str, Box<dyn Error>>
     {
@@ -650,6 +778,261 @@ mod tests
                     .any(|tool| tool.get("name").and_then(Value::as_str) == Some(expected)),
                 || format!("tools/list should include {expected}: {result}"),
             )?;
+        }
+        Ok(())
+    }
+
+    /// Verifies CLI profile discovery emits machine-readable built-in metadata
+    /// and detects a Cargo project shape.
+    #[test]
+    fn cli_config_profiles_json_lists_builtins_and_detects_rust_fixture()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-profile-catalog-rust")?;
+        write_minimal_cargo_package(&cwd)?;
+        let xdg_home = create_temp_dir("cli-profile-catalog-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("config"),
+                OsStr::new("profiles"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ],
+            &xdg_home,
+        )?;
+        let catalog = successful_json(output)?;
+
+        for expected in ["auto", "rust", "typescript", "agda", "nushell", "custom"] {
+            let profile = profile_named(&catalog, expected)?;
+            require(
+                profile.get("protocol").and_then(Value::as_str).is_some(),
+                || format!("profile {expected:?} should include a protocol: {profile}"),
+            )?;
+            require(
+                profile
+                    .get("command_family")
+                    .and_then(Value::as_str)
+                    .is_some(),
+                || format!("profile {expected:?} should include command metadata: {profile}"),
+            )?;
+        }
+
+        let rust = profile_named(&catalog, "rust")?;
+        require(
+            rust.get("detected").and_then(Value::as_bool) == Some(true),
+            || format!("rust profile should be detected for Cargo.toml fixture: {catalog}"),
+        )?;
+        require(
+            rust.get("detection_reason")
+                .and_then(Value::as_str)
+                .is_some_and(|reason| reason.contains("Cargo.toml")),
+            || format!("rust detection should explain the Cargo.toml marker: {rust}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies unknown CLI batch profiles fail with valid-profile recovery
+    /// details instead of falling through to command execution.
+    #[test]
+    fn cli_batch_unknown_profile_lists_available_profiles_and_recovery()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-unknown-profile")?;
+        let xdg_home = create_temp_dir("cli-unknown-profile-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("cargo-check"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+
+        for expected in [
+            "cargo-check",
+            "auto",
+            "rust",
+            "typescript",
+            "agda",
+            "nushell",
+            "custom",
+            "aifix config profiles --format json",
+        ] {
+            require(stderr.contains(expected), || {
+                format!("unknown profile stderr should mention {expected:?}: {stderr}")
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Verifies MCP profile discovery returns parseable catalog JSON with
+    /// built-in names and detection fields.
+    #[test]
+    fn mcp_batch_profiles_json_lists_builtins_and_detection_fields() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("mcp-profile-catalog-rust")?;
+        write_minimal_cargo_package(&cwd)?;
+        let cwd = path_to_str(&cwd)?;
+        let xdg_home = create_temp_dir("mcp-profile-catalog-xdg")?;
+        let responses = run_mcp_with_isolated_config(
+            &[
+                mcp_initialize(1),
+                mcp_initialized_notification(),
+                mcp_tool_call(
+                    2,
+                    "aifix_batch_profiles",
+                    &json!({
+                        "cwd": cwd,
+                        "format": "json"
+                    }),
+                ),
+            ],
+            &xdg_home,
+        )?;
+        let text = mcp_tool_text(mcp_response_by_id(&responses, 2)?)?;
+        let catalog: Value = serde_json::from_str(&text)?;
+
+        for expected in ["auto", "rust", "typescript", "agda", "nushell", "custom"] {
+            let profile = profile_named(&catalog, expected)?;
+            require(
+                profile.get("detected").and_then(Value::as_bool).is_some(),
+                || format!("profile {expected:?} should include detected bool: {profile}"),
+            )?;
+            require(
+                profile
+                    .get("detection_reason")
+                    .and_then(Value::as_str)
+                    .is_some(),
+                || format!("profile {expected:?} should include detection reason: {profile}"),
+            )?;
+        }
+        require(
+            profile_named(&catalog, "rust")?
+                .get("detected")
+                .and_then(Value::as_bool)
+                == Some(true),
+            || format!("rust profile should be detected for MCP Cargo fixture: {catalog}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies MCP unknown-profile recovery remains a protocol-successful tool
+    /// error with structured machine-readable metadata.
+    #[test]
+    fn mcp_batch_unknown_profile_returns_structured_tool_error() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("mcp-unknown-profile")?;
+        let cwd = path_to_str(&cwd)?;
+        let xdg_home = create_temp_dir("mcp-unknown-profile-xdg")?;
+        let responses = run_mcp_with_isolated_config(
+            &[
+                mcp_initialize(1),
+                mcp_initialized_notification(),
+                mcp_tool_call(
+                    2,
+                    "aifix_batch",
+                    &json!({
+                        "cwd": cwd,
+                        "profile": "cargo-check",
+                        "format": "json"
+                    }),
+                ),
+            ],
+            &xdg_home,
+        )?;
+        let result = mcp_result(mcp_response_by_id(&responses, 2)?)?;
+        require(
+            result.get("isError").and_then(Value::as_bool) == Some(true),
+            || format!("unknown profile should be a tool-level error: {result}"),
+        )?;
+        let text = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "structured tool error should include text content: {result}"
+                ))
+            })?;
+        require(text.contains("cargo-check"), || {
+            format!("unknown profile text should mention rejected profile: {text}")
+        })?;
+
+        let structured = result.get("structuredContent").ok_or_else(|| {
+            std::io::Error::other(format!(
+                "unknown profile error should include structuredContent: {result}"
+            ))
+        })?;
+        require(
+            structured.get("kind").and_then(Value::as_str) == Some("unknown-profile"),
+            || format!("structured error should name unknown-profile kind: {structured}"),
+        )?;
+        require(
+            structured.get("profile").and_then(Value::as_str) == Some("cargo-check"),
+            || format!("structured error should echo rejected profile: {structured}"),
+        )?;
+        let available = structured
+            .get("available_profiles")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "structured error should include available_profiles array: {structured}"
+                ))
+            })?;
+        for expected in ["auto", "rust", "typescript", "agda", "nushell", "custom"] {
+            require(
+                available
+                    .iter()
+                    .any(|profile| profile.as_str() == Some(expected)),
+                || format!("available_profiles should include {expected:?}: {structured}"),
+            )?;
+        }
+        require(
+            structured
+                .get("recovery_hint")
+                .and_then(Value::as_str)
+                .is_some_and(|hint| {
+                    hint.contains("aifix_batch_profiles")
+                        && hint.contains("aifix config profiles --format json")
+                }),
+            || format!("structured error should include actionable recovery hint: {structured}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies `auto` rejects profile-specific extra arguments with actionable
+    /// recovery text.
+    #[test]
+    fn cli_batch_auto_rejects_extra_args_with_profile_specific_recovery()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-auto-extra-args")?;
+        let xdg_home = create_temp_dir("cli-auto-extra-args-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--"),
+                OsStr::new("unexpected"),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+
+        for expected in [
+            "auto",
+            "extra arguments are profile-specific",
+            "Use a named profile",
+            "aifix config profiles --format json",
+        ] {
+            require(stderr.contains(expected), || {
+                format!("auto extra-args stderr should mention {expected:?}: {stderr}")
+            })?;
         }
         Ok(())
     }
@@ -1746,6 +2129,211 @@ diff --git a/src/main.rs b/src/main.rs
         require(!encoded.contains("\"raw\""), || {
             format!("compact digest should omit raw diagnostic payloads: {encoded}")
         })?;
+        Ok(())
+    }
+
+    /// Verifies `batch auto` runs only the detected Rust built-in for a tiny
+    /// Cargo fixture and reports skipped non-Rust built-ins instead of failing.
+    #[test]
+    fn auto_batch_rust_fixture_reports_rust_ran_and_non_rust_skipped() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-rust-only")?;
+        write_minimal_cargo_package(&cwd)?;
+        let xdg_home = create_temp_dir("auto-rust-only-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+                OsStr::new("--max-diagnostics"),
+                OsStr::new("1"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+
+        let rust = profile_status_named(&digest, "rust")?;
+        require(
+            rust.get("state").and_then(Value::as_str) == Some("ran"),
+            || format!("rust profile should run for Cargo fixture: {digest}"),
+        )?;
+        require(
+            rust.get("diagnostic_count")
+                .and_then(Value::as_u64)
+                .is_some(),
+            || format!("ran rust profile should report diagnostic_count: {rust}"),
+        )?;
+
+        for expected in ["typescript", "agda", "nushell"] {
+            let status = profile_status_named(&digest, expected)?;
+            require(
+                status.get("state").and_then(Value::as_str) == Some("skipped"),
+                || format!("non-Rust profile {expected:?} should be skipped: {digest}"),
+            )?;
+            require(
+                status.get("reason").and_then(Value::as_str).is_some(),
+                || format!("skipped profile {expected:?} should explain detection: {status}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Verifies `batch auto` reports both Rust and TypeScript statuses for a
+    /// mixed-shape fixture, while tolerating systems without `tsc`.
+    #[test]
+    fn auto_batch_mixed_rust_typescript_fixture_reports_both_statuses() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-rust-typescript")?;
+        write_minimal_cargo_package(&cwd)?;
+        fs::write(
+            cwd.join("tsconfig.json"),
+            r#"{"compilerOptions":{"noEmit":true,"strict":true},"include":["src/**/*.ts"]}"#,
+        )?;
+        fs::write(
+            cwd.join("src").join("index.ts"),
+            "const value: number = 1;\n",
+        )?;
+        let xdg_home = create_temp_dir("auto-rust-typescript-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+                OsStr::new("--max-diagnostics"),
+                OsStr::new("1"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+
+        require(
+            profile_status_named(&digest, "rust")?
+                .get("state")
+                .and_then(Value::as_str)
+                == Some("ran"),
+            || format!("rust profile should run for mixed Cargo fixture: {digest}"),
+        )?;
+        let typescript = profile_status_named(&digest, "typescript")?;
+        let typescript_state =
+            typescript
+                .get("state")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "typescript status should include machine-readable state: {typescript}"
+                    ))
+                })?;
+        require(matches!(typescript_state, "ran" | "failed"), || {
+            format!("typescript should be selected, not skipped, for tsconfig fixture: {digest}")
+        })?;
+        require(
+            typescript.get("protocol").and_then(Value::as_str).is_some()
+                && typescript
+                    .get("command_family")
+                    .and_then(Value::as_str)
+                    .is_some(),
+            || format!("typescript status should report protocol and command family: {typescript}"),
+        )?;
+        match typescript_state {
+            | "ran" => {
+                require(
+                    typescript
+                        .get("diagnostic_count")
+                        .and_then(Value::as_u64)
+                        .is_some(),
+                    || {
+                        format!(
+                            "ran TypeScript status should report diagnostic_count: {typescript}"
+                        )
+                    },
+                )?;
+            },
+            | "failed" => {
+                require(
+                    typescript
+                        .get("error_kind")
+                        .and_then(Value::as_str)
+                        .is_some(),
+                    || format!("failed TypeScript status should report error_kind: {typescript}"),
+                )?;
+            },
+            | _ => unreachable!("state was validated above"),
+        }
+        Ok(())
+    }
+
+    /// Verifies configured `auto = true` profiles preserve diagnostics from a
+    /// successful profile while reporting another profile's spawn failure.
+    #[test]
+    fn auto_batch_configured_profiles_keep_partial_diagnostics_and_failure_status()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-configured-partial-failure")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.good_auto]\n",
+                "argv = [\"printf\", \"partial auto diagnostic\\n\"]\n",
+                "protocol = \"nushell-text\"\n",
+                "auto = true\n\n",
+                "[profiles.bad_auto]\n",
+                "argv = [\"aifix-impossible-executable-for-auto-profile\"]\n",
+                "protocol = \"nushell-text\"\n",
+                "auto = true\n",
+            ),
+        )?;
+        let xdg_home = create_temp_dir("auto-configured-partial-failure-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+
+        require(
+            digest
+                .pointer("/counts/total")
+                .and_then(Value::as_u64)
+                .is_some_and(|total| total >= 1),
+            || format!("partial auto digest should retain successful diagnostics: {digest}"),
+        )?;
+        require(
+            json_contains_str(&digest, "partial auto diagnostic"),
+            || format!("partial auto digest should include printf diagnostic text: {digest}"),
+        )?;
+
+        let good = profile_status_named(&digest, "good_auto")?;
+        require(
+            good.get("state").and_then(Value::as_str) == Some("ran"),
+            || format!("good configured auto profile should report ran: {digest}"),
+        )?;
+        require(
+            good.get("diagnostic_count")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count >= 1),
+            || format!("good configured auto profile should report diagnostics: {good}"),
+        )?;
+        let bad = profile_status_named(&digest, "bad_auto")?;
+        require(
+            bad.get("state").and_then(Value::as_str) == Some("failed"),
+            || format!("bad configured auto profile should report failed: {digest}"),
+        )?;
+        require(
+            bad.get("error_kind").and_then(Value::as_str).is_some(),
+            || format!("failed configured auto profile should report error_kind: {bad}"),
+        )?;
         Ok(())
     }
 
