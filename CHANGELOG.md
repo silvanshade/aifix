@@ -15,6 +15,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(config)_ Default to XDG config paths
 * _(agda)_ Add direct CLI diagnostic support
 
+* _(config)_ List discoverable batch profiles with JSON, compact JSON, and Markdown output
+* _(batch)_ Default omitted batch profiles to `auto` and aggregate applicable Rust, TypeScript, Agda, and Nushell profile diagnostics
+* _(batch)_ Guide extra args as profile-specific and reject extra args for `auto`
+* _(mcp)_ Expose batch profile listing, omitted or empty batch profiles, and structured unknown-profile recovery data
+
 ### Fixed
 
 * _(agda)_ Ignore `Checking …` and `Finished …` progress lines during Agda text parsing and auto protocol detection

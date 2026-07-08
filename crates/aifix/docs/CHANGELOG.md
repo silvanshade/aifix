@@ -31,6 +31,10 @@
 * TypeScript and LSP adapters reject blank required fields, and LSP rejects malformed or reversed ranges.
 * Digest duplicate identity excludes preserved raw payloads and uses normalized source, code, severity, message, spans, and suggestions.
 * Compact JSON omits raw diagnostic payloads and captured stdout/stderr bodies while retaining invocation metadata and byte counts.
+* Batch profile discovery now lists `auto`, built-ins, `custom`, and configured profiles with detection metadata across JSON, compact JSON, and Markdown renderings.
+* Batch execution now treats omitted profiles and explicit `auto` as the automatic profile, aggregates applicable Rust, TypeScript, Agda, and Nushell diagnostics, and reports per-profile statuses.
+* Batch extra args are documented as profile-specific, and `auto` rejects extra args instead of forwarding them ambiguously.
+* MCP batch tools now expose profile listing, accept omitted or empty batch profiles, and return structured recovery data for unknown profiles.
 
 ### Integration coverage
 
