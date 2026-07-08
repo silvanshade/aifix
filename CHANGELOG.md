@@ -14,7 +14,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(mcp)_ Harden fix replay cache
 * _(config)_ Default to XDG config paths
 * _(agda)_ Add direct CLI diagnostic support
-
 * _(config)_ List discoverable batch profiles with JSON, compact JSON, and Markdown output
 * _(batch)_ Default omitted batch profiles to `auto` and aggregate applicable Rust, TypeScript, Agda, and Nushell profile diagnostics
 * _(batch)_ Guide extra args as profile-specific and reject extra args for `auto`
