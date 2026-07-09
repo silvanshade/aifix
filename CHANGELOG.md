@@ -9,23 +9,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 
 * Implement aifix diagnostic CLI
 * _(mcp)_ Add diagnostic server
-* _(mcp)_ Advertise agent tool guidance during initialize
 * _(cache)_ Add syntax-aware replay
 * _(mcp)_ Harden fix replay cache
 * _(config)_ Default to XDG config paths
-* _(agda)_ Add direct CLI diagnostic support
-* _(config)_ List discoverable batch profiles with JSON, compact JSON, and Markdown output
-* _(batch)_ Default omitted batch profiles to `auto` and aggregate applicable Rust, TypeScript, Agda, and Nushell profile diagnostics
-* _(batch)_ Guide extra args as profile-specific and reject extra args for `auto`
-* _(mcp)_ Expose batch profile listing, omitted or empty batch profiles, and structured unknown-profile recovery data
+* _(mcp)_ Advertise agent guidance
+* _(agda)_ Support direct diagnostics
+* _(agda)_ Support expected diagnostic gates
+* _(cli)_ Add auto batch profile and profile discovery command
+* _(mcp)_ Add aifix_batch_profiles and auto profile support
+* _(batch)_ Add batch profile catalog and auto profile detection
 
-### Fixed
+### Bug Fixes
 
-* _(agda)_ Ignore `Checking …` and `Finished …` progress lines during Agda text parsing and auto protocol detection
+* _(agda)_ Ignore progress lines
+* _(mcp)_ Import parse_diagnostics helper
+* Return error for unexpected typescript state
 
 ### Refactor
 
 * Align Rust contracts with Wyrd
+* _(mcp)_ Pass structured error content by reference
+* _(batch)_ Extract built-in command families and inline helpers
+* _(config)_ Dereference config command in run_config
 
 ### Documentation
 
@@ -36,7 +41,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Clarify incomplete bead workflow
 * Design syntax cache matching
 * Add project skill docs
-* Adopt the agentic-dev overlay and thin aifix guidance over the shared core
+* _(changelog)_ Document batch profile discovery and auto diagnostics
+* Describe auto batch behavior and mcp profile guidance
+* Refresh manifest hashes
+* Refresh manifest after changelog format
+
+### Testing
+
+* Add isolated env helpers for cli and mcp integration tests
+* Verify platform-native mode reports project dirs user path
 
 ### Continuous Integration
 
@@ -51,5 +64,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * Add license metadata
 * _(cargo)_ Add dist profile config
 * _(release)_ Configure release tooling
+* _(config)_ Update mise
+* _(config)_ Update mise
+* Ignore node_modules in gitignore and treefmt
+* _(core)_ Adopt agentic-dev overlay
+* _(ci)_ Adopt cached act parity
 
 [unreleased]: https://github.com/silvanshade/aifix/compare/main...HEAD

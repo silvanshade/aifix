@@ -1807,13 +1807,20 @@ diff --git a/src/main.rs b/src/main.rs
     fn platform_native_config_dir_mode_reports_project_dirs_user_path() -> Result<(), Box<dyn Error>>
     {
         let xdg_home = create_temp_dir("xdg-config-native-mode")?;
-        let expected_user_line = match ProjectDirs::from("dev", "aifix", "aifix") {
-            | Some(project_dirs) => {
-                let expected = project_dirs.config_dir().join("aifix.toml");
-                let expected = path_to_str(&expected)?;
-                format!("user: {expected}")
-            },
-            | None => "user: -".to_owned(),
+        let expected_user_line = if cfg!(target_os = "linux") {
+            let expected = xdg_home.join("aifix").join("aifix.toml");
+            let expected = path_to_str(&expected)?;
+            format!("user: {expected}")
+        }
+        else {
+            match ProjectDirs::from("dev", "aifix", "aifix") {
+                | Some(project_dirs) => {
+                    let expected = project_dirs.config_dir().join("aifix.toml");
+                    let expected = path_to_str(&expected)?;
+                    format!("user: {expected}")
+                },
+                | None => "user: -".to_owned(),
+            }
         };
         let output = run_aifix_with_env(
             [OsStr::new("config"), OsStr::new("paths")],

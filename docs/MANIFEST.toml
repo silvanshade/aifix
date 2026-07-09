@@ -16,7 +16,7 @@ b3 = "eda51433a2f7c52e7fb10a650632155a0ab4be839264f0b3626e2a3574c468cc"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "b9c1f509f80f6fbd95d952ba999afcb453c918c101f411202cf55c495013af35"
+b3 = "80dbd1ca4f83244ee771c1fc042e884dfdc28b6344a09d7a622cbc93caa86a55"
 
 [[files]]
 path = "docs/ADR.md"

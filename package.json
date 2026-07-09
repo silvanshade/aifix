@@ -2,7 +2,7 @@
   "name": "aifix",
   "private": true,
   "type": "module",
-  "packageManager": "aube@1.23.0",
+  "packageManager": "aube@1.26.0",
   "scripts": {
     "commitlint": "commitlint --config .commitlintrc.mts"
   },

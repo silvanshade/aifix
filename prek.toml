@@ -82,28 +82,10 @@ stages = ["pre-commit"]
 
 # Aifix pre-push gates.
 [[repos.hooks]]
-id = "cargo-build"
-name = "cargo build"
+id = "act-ci"
+name = "full cached act CI simulation"
 language = "system"
-entry = "mise run cargo:build"
-pass_filenames = false
-always_run = true
-stages = ["pre-push"]
-
-[[repos.hooks]]
-id = "cargo-clippy"
-name = "cargo clippy"
-language = "system"
-entry = "mise run cargo:clippy"
-pass_filenames = false
-always_run = true
-stages = ["pre-push"]
-
-[[repos.hooks]]
-id = "cargo-nextest"
-name = "cargo nextest"
-language = "system"
-entry = "mise run cargo:nextest"
+entry = "mise exec -- nu scripts/act-ci.nu --all --rm"
 pass_filenames = false
 always_run = true
 stages = ["pre-push"]

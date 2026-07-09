@@ -3,7 +3,7 @@
 # Copy-basis: .agents/core/fragments/wt.base.toml.
 # Hook changes require `wt config approvals add`.
 [[pre-start]]
-mise-trust = "mise trust"
+mise-trust = "mise trust -y {{ worktree_path }}/mise.toml"
 
 [[pre-start]]
 wt-step-copy-gitignored = "wt step copy-ignored"
@@ -12,20 +12,16 @@ wt-step-copy-gitignored = "wt step copy-ignored"
 beads-chmod = "chmod 0700 .beads"
 
 [[pre-start]]
-core-init = "git submodule update --init"
+core-init = "nu {{ primary_worktree_path }}/.agents/core/scripts/init-submodules-from-primary.nu --primary {{ primary_worktree_path }}"
 
 [[pre-start]]
 beads-pull = "bd dolt pull || true"
 
 [pre-merge]
 # Aifix uses one legacy ADR file, not an ADR directory.
+act-ci = "mise exec -- nu scripts/act-ci.nu --all --rm"
 adr-guard = "nu .agents/core/scripts/check-adr-on-main.nu --adr-path docs/ADR.md"
 core-pin = "nu .agents/core/scripts/check-core-pin.nu"
-treefmt = "mise run treefmt:check"
-docs-manifest-drift = "mise run docs:manifest-drift"
-cargo-build = "mise run cargo:build"
-cargo-clippy = "mise run cargo:clippy"
-cargo-nextest = "mise run cargo:nextest"
 beads = "bd dolt pull && bd dolt push"
 
 [post-merge]

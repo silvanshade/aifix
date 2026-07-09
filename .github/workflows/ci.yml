@@ -13,8 +13,10 @@ env:
   CARGO_TERM_COLOR: always
   MISE_ENV: ci
   MISE_ENABLE_TOOLS: "aube,node"
-  RUSTUP_TOOLCHAIN: nightly-2026-05-27
+  RUSTUP_TOOLCHAIN: nightly-2026-07-07
+  CI_VERSION_AUBE: 1.26.0
   CI_VERSION_MISE: 2026.6.0
+  CI_VERSION_NODE: 26.4.0
 
 jobs:
   template:
@@ -26,17 +28,57 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
+          submodules: 'true'
+
+      - &prepare-act-rustup-cache
+        name: prepare act rustup cache mount
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          sudo mkdir -p "$HOME/.rustup"
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/.rustup"
+
+      - &cache-rustup-toolchain
+        name: cache rustup toolchain
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.rustup/toolchains/${{ env.RUSTUP_TOOLCHAIN }}-*
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-${{ env.RUSTUP_TOOLCHAIN }}
+
       - &install-rust-tools
         name: install rust tools
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: clippy, llvm-tools-preview, rustfmt, rust-src
+
+      - &cache-rust-artifacts
+        name: cache Rust build artifacts
+        if: ${{ env.ACT != 'true' }}
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          prefix-key: aifix-v1-rust
+          shared-key: nightly
+          cache-all-crates: true
+          cache-on-failure: true
+
+      - &prepare-act-rust-cache
+        name: prepare act Rust cache mounts
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          sudo mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git" "$HOME/.cache/cargo-careful" "$HOME/.cache/tree-sitter"
+          if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+            sudo mkdir -p "$CARGO_TARGET_DIR"
+            sudo chown -R "$(id -u):$(id -g)" "$CARGO_TARGET_DIR"
+          fi
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME/registry" "$CARGO_HOME/git" "$HOME/.cache/cargo-careful" "$HOME/.cache/tree-sitter"
+
       - &cargo-binstall
-        name: install rust tools
+        name: install cargo-binstall
         uses: taiki-e/install-action@cde8c9e634f4a17bc06b61413ac0ef75450eac46
         with:
           tool: cargo-binstall
+
       - &install-mise-tools
         name: install mise tools
         uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151
@@ -45,28 +87,50 @@ jobs:
           cache: true
           experimental: true
 
-      - &install-aube-packages
-        uses: endevco/aube-action@f82ca2f6c943dbde1904945d9f0ee1a0faf8e945
+      - &prepare-act-tool-cache
+        name: prepare act tool cache mounts
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          sudo mkdir -p "$HOME/.cache/aube" "$HOME/.cache/mise" "$HOME/.local/share/aube" "$HOME/.local/share/mise" "$HOME/.local/state/mise"
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/aube" "$HOME/.cache/mise" "$HOME/.local/share/aube" "$HOME/.local/share/mise" "$HOME/.local/state/mise"
+
+      - &cache-aube-packages
+        name: cache aube package store
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          node-version: auto
-          run-install: true
+          path: ~/.cache/aube
+          key: aube-${{ runner.os }}-${{ runner.arch }}-${{ env.CI_VERSION_AUBE }}-${{ env.CI_VERSION_NODE }}-${{ hashFiles('package.json', 'aube-lock.yaml', 'aube-workspace.yaml') }}
+
+      - &install-aube-packages
+        name: aube ci --recursive
+        run: aube ci --recursive
+
   cargo-build:
-    name: cargo build
+    name: cargo build --workspace --all-targets --all-features
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
-      - *install-mise-tools
-      - name: mise run cargo:build
-        run: mise run cargo:build
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
+      - name: cargo build
+        run: cargo build --workspace --all-targets --all-features
 
   docs-gates:
     name: docs gates
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
       - *cargo-binstall
+      - *prepare-act-tool-cache
       - name: enable mise tools
         run: |
           tools=()
@@ -74,24 +138,33 @@ jobs:
           tools+=("cargo:nu")
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
-      - name: mise run docs:conflict-markers
+      - name: check unresolved conflict markers
         run: mise run docs:conflict-markers
-      - name: mise run docs:manifest-drift
+      - name: check docs manifest drift
         run: mise run docs:manifest-drift
 
   project-lint:
-    name: project lint
+    name: project lint and workflow validation
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
       - *cargo-binstall
+      - *prepare-act-tool-cache
+      - *cache-aube-packages
+      - *install-mise-tools
       - name: enable mise tools
         run: |
           tools=()
+          tools+=("cargo:b3sum")
           tools+=("cargo:nu")
           tools+=("cargo:rumdl")
           tools+=("cargo:typos-cli")
+          tools+=("cargo:wrkflw")
           tools+=("cargo:zizmor")
           tools+=("github:numtide/treefmt")
           tools+=("github:tombi-toml/tombi")
@@ -100,62 +173,73 @@ jobs:
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
       - *install-aube-packages
-      - name: mise run commitlint:branch
-        run: mise run commitlint:branch
-      - name: install wrkflw
-        uses: taiki-e/install-action@cde8c9e634f4a17bc06b61413ac0ef75450eac46
-        with:
-          tool: wrkflw@0.8.0
-      - name: mise run treefmt:check
-        run: mise run treefmt:check
+      - name: commitlint current branch
+        run: aube exec commitlint --from main --to HEAD --config .commitlintrc.mts
+      - name: treefmt --ci
+        run: mise exec -- treefmt --ci
       - name: wrkflw validate
-        run: wrkflw validate
+        run: mise exec -- wrkflw validate
 
   cargo-clippy:
-    name: cargo clippy
+    name: cargo clippy --workspace --all-targets --all-features
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
-      - *install-mise-tools
-      - name: mise run cargo:clippy
-        run: mise run cargo:clippy
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   cargo-nextest:
-    name: cargo nextest
+    name: cargo nextest run --workspace --all-targets --all-features
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
       - *cargo-binstall
+      - *prepare-act-tool-cache
       - name: enable mise tools
         run: |
           tools=()
           tools+=("cargo:cargo-nextest")
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
-      - name: mise run cargo:nextest
-        run: mise run cargo:nextest
+      - name: cargo nextest
+        run: cargo nextest run --workspace --all-targets --all-features
 
   cargo-llvm-cov:
     name: cargo llvm-cov --workspace --all-targets --all-features
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *prepare-act-rustup-cache
+      - *cache-rustup-toolchain
       - *install-rust-tools
+      - *cache-rust-artifacts
+      - *prepare-act-rust-cache
       - *cargo-binstall
+      - *prepare-act-tool-cache
       - name: enable mise tools
         run: |
           tools=()
           tools+=("cargo:cargo-llvm-cov")
-          tools+=("aube")
-          tools+=("node")
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
-      - *install-aube-packages
-      - name: mise run cargo:llvm-cov
-        run: mise run cargo:llvm-cov
+      - name: cargo llvm-cov
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --no-report --workspace --all-targets --all-features
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
+          cargo llvm-cov report --summary-only
       - name: upload coverage artifact
+        if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: coverage-lcov
