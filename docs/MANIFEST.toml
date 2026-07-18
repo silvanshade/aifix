@@ -20,7 +20,7 @@ b3 = "80dbd1ca4f83244ee771c1fc042e884dfdc28b6344a09d7a622cbc93caa86a55"
 
 [[files]]
 path = "docs/ADR.md"
-b3 = "7c17c2002fc83ccb4eb549730b23bbec8be3aa2378b8931c0c000b9861093458"
+b3 = "4d845186765f06781284b38430038cd52a71364d321fe5f6f0cf88610f2b4b89"
 
 [[files]]
 path = "docs/KNOWLEDGE.md"

@@ -310,3 +310,33 @@ Empty input returns explicit zero-diagnostic results for the MCP surfaces that a
 * Parallel cache writers are serialized without routing tool commands through a shell or adding dependencies.
 * Missing generated or deleted files no longer abort replay for unrelated diagnostics.
 * Exact-line patch churn remains an explicit limitation rather than an unsafe fuzzy apply.
+
+## ADR-0011: Spill large batch streams behind bounded retention
+
+Status: Accepted  
+Date: 2026-07-18
+
+### ADR-0011 context
+
+The fixed 1 MiB per-stream cap from ADR-0006 rejected ordinary compiler runs with hundreds or thousands of diagnostics before parsing.
+The Wyrd Rust profile used for `aifix-iy8` produced approximately 13.4 MB of cargo JSONL and nearly 2,000 normalized diagnostics.
+Raising the in-memory cap would only move the failure and amplify raw output in invocation metadata.
+
+### ADR-0011 decision
+
+Supersede only ADR-0006's fixed-capture mechanism.
+Keep separate 1 MiB stdout and stderr prefixes in invocation metadata, but spill larger complete streams to private temporary files for parsing.
+Validate complete streams incrementally as UTF-8 and parse cargo compiler-message JSONL one record at a time.
+Expose complete stream byte counts even when invocation bodies contain only prefixes.
+
+Retain a hard, configurable per-stream processing budget for runaway tools.
+The default is 1 GiB; CLI `--max-output-bytes`, MCP `maxOutputBytes`, and root or profile `max_output_bytes` configuration may override it.
+Continue to execute direct argv without a shell and preserve parseable nonzero diagnostic results.
+
+### ADR-0011 consequences
+
+* Ordinary multi-megabyte compiler output no longer fails at the invocation-retention boundary.
+* Raw invocation evidence remains bounded in memory while parsers receive complete input.
+* Spill files are create-new, mode `0600` on Unix, and deleted when capture state leaves scope.
+* Large diagnostic-count memory remains proportional to normalized diagnostics and their preserved raw records, not the complete child stream.
+* Explicit output budgets still fail with a stream-, executable-, and byte-specific process error.
