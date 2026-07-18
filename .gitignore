@@ -22,6 +22,7 @@ node_modules/
 .claude/worktrees/
 .codegraph/
 .aifix/
+.weave/
 
 # user notes
 .notes
