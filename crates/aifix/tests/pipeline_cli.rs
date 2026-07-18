@@ -18,6 +18,7 @@ mod tests
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 
+    use aifix::batch::BATCH_STREAM_RETENTION_LIMIT;
     use directories::ProjectDirs;
     use serde_json::Value;
     use serde_json::json;
@@ -2362,6 +2363,71 @@ diff --git a/src/main.rs b/src/main.rs
         Ok(())
     }
 
+    /// Verifies auto batch budgets resolve from CLI, `[profiles.auto]`,
+    /// selected-profile config, then root config.
+    #[test]
+    fn auto_batch_output_budget_precedence() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-profile-output-budget")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "max_output_bytes = 6\n\n",
+                "[profiles.auto]\n",
+                "max_output_bytes = 3\n\n",
+                "[profiles.budget_auto]\n",
+                "argv = [\"printf\", \"12345\"]\n",
+                "protocol = \"nushell-text\"\n",
+                "auto = true\n",
+                "max_output_bytes = 4\n",
+            ),
+        )?;
+        let xdg_home = create_temp_dir("auto-profile-output-budget-xdg")?;
+
+        let profile_limited = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ],
+            &xdg_home,
+        )?;
+        let profile_limited = successful_json(profile_limited)?;
+        let profile_status = profile_status_named(&profile_limited, "budget_auto")?;
+        require(
+            profile_status.get("state").and_then(Value::as_str) == Some("failed"),
+            || format!("auto profile should honor the 3-byte auto budget: {profile_status}"),
+        )?;
+        require(
+            json_contains_str(profile_status, "capture limit of 3 bytes"),
+            || format!("auto profile failure should report the auto budget: {profile_status}"),
+        )?;
+
+        let cli_override = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+                OsStr::new("--max-output-bytes"),
+                OsStr::new("5"),
+            ],
+            &xdg_home,
+        )?;
+        let cli_override = successful_json(cli_override)?;
+        let cli_status = profile_status_named(&cli_override, "budget_auto")?;
+        require(
+            cli_status.get("state").and_then(Value::as_str) == Some("ran"),
+            || format!("CLI budget should override auto profile config: {cli_status}"),
+        )?;
+        Ok(())
+    }
+
     /// Verifies that built-in Agda batch mode treats parseable nonzero exits as
     /// successful diagnostic digests.
     #[test]
@@ -2453,27 +2519,139 @@ diff --git a/src/main.rs b/src/main.rs
         Ok(())
     }
 
-    /// Verifies that custom batch capture rejects over-limit stdout.
+    /// Verifies that auto-detected custom batch parsing accepts output above
+    /// the in-memory retention threshold and reports the complete byte
+    /// count.
     #[test]
-    fn custom_batch_command_rejects_over_limit_stdout() -> Result<(), Box<dyn Error>>
+    fn custom_batch_command_spills_large_stdout_for_parsing() -> Result<(), Box<dyn Error>>
+    {
+        let temp_dir = create_temp_dir("large-batch-stdout")?;
+        let fixture = temp_dir.join("diagnostics.txt");
+        let line = "aifix repeated large diagnostic\n";
+        let repetitions = BATCH_STREAM_RETENTION_LIMIT.div_ceil(line.len()) + 1;
+        let payload = line.repeat(repetitions);
+        fs::write(&fixture, &payload)?;
+        let fixture = path_to_str(&fixture)?;
+
+        let output = run_aifix([
+            "batch",
+            "custom",
+            "--format",
+            "compact-json",
+            "--max-diagnostics",
+            "1",
+            "--",
+            "cat",
+            fixture,
+        ])?;
+        let digest = successful_json(output)?;
+        let expected_bytes = u64::try_from(payload.len())?;
+
+        require(
+            json_field_equals_u64(&digest, "stdout_bytes", expected_bytes),
+            || {
+                format!(
+                    "compact invocation should report all {expected_bytes} stdout bytes: {digest}"
+                )
+            },
+        )?;
+        require(
+            json_contains_str(&digest, "aifix repeated large diagnostic"),
+            || format!("batch digest should parse spilled diagnostics: {digest}"),
+        )?;
+        Ok(())
+    }
+
+    /// Verifies that custom batch capture honors an explicit processing budget.
+    #[test]
+    fn custom_batch_command_rejects_output_budget_overflow() -> Result<(), Box<dyn Error>>
     {
         let output = run_aifix([
             "batch",
             "custom",
             "--protocol",
             "nushell-text",
-            "--format",
-            "json",
+            "--max-output-bytes",
+            "4",
             "--",
-            "yes",
-            "aifix over-limit diagnostic",
+            "printf",
+            "12345",
         ])?;
         let stderr = unsuccessful_stderr(output)?;
 
         require(
-            stderr.contains("stdout from `yes` exceeded capture limit"),
+            stderr.contains("stdout from `printf` exceeded capture limit of 4 bytes"),
             || format!("stderr should explain bounded stdout rejection: {stderr}"),
         )?;
+        Ok(())
+    }
+
+    /// Verifies CLI, profile, and root output budgets use documented
+    /// highest-to-lowest precedence.
+    #[test]
+    fn batch_output_budget_precedence_is_cli_profile_then_root() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("batch-output-budget-precedence")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "max_output_bytes = 3\n\n",
+                "[profiles.root_limit]\n",
+                "argv = [\"printf\", \"12345\"]\n",
+                "protocol = \"nushell-text\"\n\n",
+                "[profiles.profile_limit]\n",
+                "argv = [\"printf\", \"12345\"]\n",
+                "protocol = \"nushell-text\"\n",
+                "max_output_bytes = 4\n",
+            ),
+        )?;
+        let xdg_home = create_temp_dir("batch-output-budget-precedence-xdg")?;
+
+        let root_output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("root_limit"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let root_stderr = unsuccessful_stderr(root_output)?;
+        require(root_stderr.contains("capture limit of 3 bytes"), || {
+            format!("root output budget should apply when profile omits one: {root_stderr}")
+        })?;
+
+        let profile_output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("profile_limit"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let profile_stderr = unsuccessful_stderr(profile_output)?;
+        require(profile_stderr.contains("capture limit of 4 bytes"), || {
+            format!("profile output budget should override root config: {profile_stderr}")
+        })?;
+
+        let cli_output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("profile_limit"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+                OsStr::new("--max-output-bytes"),
+                OsStr::new("5"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(cli_output)?;
+        require(json_field_equals_u64(&digest, "stdout_bytes", 5), || {
+            format!("CLI output budget should override profile config: {digest}")
+        })?;
         Ok(())
     }
 

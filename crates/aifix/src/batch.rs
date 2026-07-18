@@ -4,8 +4,17 @@
 //! it directly with `std::process::Command`, captures bounded stdout and stderr
 //! separately, and returns a digest whenever the captured output is parseable.
 
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Cursor;
 use std::io::Read;
+use std::io::Write as _;
+use std::path::PathBuf;
 use std::process::Child;
 use std::process::ChildStderr;
 use std::process::ChildStdout;
@@ -17,7 +26,10 @@ use std::thread::JoinHandle;
 
 use camino::Utf8Path;
 
-use crate::adapter::parse_diagnostics;
+use crate::adapter::AutoReaderProtocol;
+use crate::adapter::detect_auto_protocol_reader;
+use crate::adapter::parse_complete_json_reader;
+use crate::adapter::parse_diagnostics_reader;
 use crate::config::Config;
 use crate::config::ProfileConfig;
 use crate::digest::build_digest;
@@ -254,8 +266,10 @@ pub fn render_profile_catalog(
 /// # Contract
 /// - requires: `config` is merged and `cwd` is the direct execution directory.
 /// - ensures: considers every defaultable profile, skips undetected profiles,
-///   continues after operational failures, and returns a digest whose
-///   `profile_statuses` records every considered outcome.
+///   resolves each process budget from `max_output_override`, selected-profile
+///   config, root config, then the default, continues after operational
+///   failures, and returns a digest whose `profile_statuses` records every
+///   considered outcome.
 /// - fails: none for per-profile operational failures; those are recorded in
 ///   the returned digest status metadata.
 /// - panics: none.
@@ -265,6 +279,7 @@ pub fn run_auto_profile(
     config: &Config,
     cwd: &Utf8Path,
     max_diagnostics: Option<usize>,
+    max_output_override: Option<usize>,
 ) -> Digest
 {
     let catalog = profile_catalog(config, cwd);
@@ -286,7 +301,7 @@ pub fn run_auto_profile(
             continue;
         }
 
-        let result = run_auto_selected_profile(config, &profile, cwd);
+        let result = run_auto_selected_profile(config, &profile, cwd, max_output_override);
         match result {
             | Ok(digest) => {
                 let diagnostic_count = digest.counts.total;
@@ -332,8 +347,62 @@ pub fn run_auto_profile(
     digest.profile_statuses = statuses;
     digest
 }
-/// Maximum bytes retained from each child-process output stream.
-pub const BATCH_STREAM_CAPTURE_LIMIT: usize = 1024 * 1024;
+/// Maximum bytes retained in memory from each child-process output stream.
+///
+/// Complete streams above this threshold spill to a private temporary file and
+/// remain available to the parser.
+pub const BATCH_STREAM_RETENTION_LIMIT: usize = 1024 * 1024;
+/// Default maximum bytes accepted from each child-process output stream.
+///
+/// Spilling keeps memory bounded, while this larger processing budget prevents
+/// accidental or malicious tools from consuming unbounded temporary storage.
+pub const DEFAULT_BATCH_STREAM_OUTPUT_LIMIT: usize = 1024 * 1024 * 1024;
+
+/// Resource and rendering limits for one batch execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BatchLimits
+{
+    /// Maximum diagnostics retained per digest group.
+    pub max_diagnostics: Option<usize>,
+    /// Maximum bytes accepted from each child-process output stream.
+    pub max_output_bytes: usize,
+}
+
+impl Default for BatchLimits
+{
+    /// Use uncapped digest samples and the bounded default stream budget.
+    #[inline]
+    fn default() -> Self
+    {
+        Self {
+            max_diagnostics: None,
+            max_output_bytes: DEFAULT_BATCH_STREAM_OUTPUT_LIMIT,
+        }
+    }
+}
+
+impl BatchLimits
+{
+    /// Construct explicit batch limits.
+    ///
+    /// # Contract
+    /// - ensures: preserves both caller-provided limits exactly.
+    /// - fails: none.
+    /// - panics: none.
+    #[must_use]
+    #[inline]
+    pub const fn new(
+        max_diagnostics: Option<usize>,
+        max_output_bytes: usize,
+    ) -> Self
+    {
+        Self {
+            max_diagnostics,
+            max_output_bytes,
+        }
+    }
+}
 
 /// Run a built-in or custom profile and return an uncapped digest.
 ///
@@ -341,13 +410,13 @@ pub const BATCH_STREAM_CAPTURE_LIMIT: usize = 1024 * 1024;
 /// - requires: `profile` names a built-in profile or `custom`; custom profiles
 ///   require `extra_args` to contain the executable first.
 /// - ensures: executes the selected argv in `cwd`, retains at most
-///   [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest with
-///   uncapped group samples when output parses successfully.
+///   [`BATCH_STREAM_RETENTION_LIMIT`] bytes per stream in memory, spills larger
+///   output within [`DEFAULT_BATCH_STREAM_OUTPUT_LIMIT`], and returns uncapped
+///   group samples when parsing succeeds.
 /// - fails: returns invalid argument, process, UTF-8, or parser errors.
 /// - panics: debug builds may panic if batch argv construction violates
 ///   documented non-empty executable invariants.
 ///
-/// # Errors
 /// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -359,36 +428,36 @@ pub fn run_profile(
     cwd: &Utf8Path,
 ) -> Result<Digest, AifixError>
 {
-    run_profile_with_limit(profile, extra_args, protocol, cwd, None)
+    run_profile_with_limits(profile, extra_args, protocol, cwd, BatchLimits::default())
 }
 
-/// Run a built-in or custom profile and cap digest samples per group.
+/// Run a built-in or custom profile with explicit resource limits.
 ///
 /// # Contract
 /// - requires: `profile` names a built-in profile or `custom`; custom profiles
 ///   require `extra_args` to contain the executable first.
 /// - ensures: executes the selected argv in `cwd`, retains at most
-///   [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest
-///   whose per-group samples respect `max_diagnostics`.
+///   [`BATCH_STREAM_RETENTION_LIMIT`] bytes per stream in memory, spills larger
+///   streams for incremental parsing, and applies `limits` to output processing
+///   and digest samples.
 /// - fails: returns invalid argument, process, UTF-8, or parser errors.
 /// - panics: debug builds may panic if batch argv construction violates
 ///   documented non-empty executable invariants.
 ///
 /// # Errors
-/// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
-/// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
+/// stream processing fails, captured streams are not UTF-8, or parsing fails.
 #[inline]
-pub fn run_profile_with_limit(
+pub fn run_profile_with_limits(
     profile: &str,
     extra_args: &[String],
     protocol: Protocol,
     cwd: &Utf8Path,
-    max_diagnostics: Option<usize>,
+    limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
     let argv = profile_command(profile, extra_args)?;
-    run_argv(argv, protocol, cwd, max_diagnostics)
+    run_argv(argv, protocol, cwd, limits)
 }
 
 /// Run an explicitly configured profile and cap digest samples per group.
@@ -397,8 +466,8 @@ pub fn run_profile_with_limit(
 /// - requires: `config.argv`, when non-empty, starts with an executable;
 ///   otherwise `name` resolves to a built-in profile.
 /// - ensures: executes configured argv plus `extra_args` in `cwd`, retains at
-///   most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream, and returns a digest
-///   whose per-group samples respect `max_diagnostics`.
+///   most [`BATCH_STREAM_RETENTION_LIMIT`] bytes per stream in memory, and
+///   applies `limits` to output processing and digest samples.
 /// - fails: returns invalid argument, process, UTF-8, or parser errors.
 /// - panics: debug builds may panic if resolved configured argv is unexpectedly
 ///   empty before execution.
@@ -414,7 +483,7 @@ pub fn run_configured_profile(
     extra_args: &[String],
     protocol: Protocol,
     cwd: &Utf8Path,
-    max_diagnostics: Option<usize>,
+    limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
     let mut argv = if config.argv.is_empty() {
@@ -428,7 +497,7 @@ pub fn run_configured_profile(
         !argv.is_empty(),
         "configured profile argv must include an executable before execution"
     );
-    run_argv(argv, protocol, cwd, max_diagnostics)
+    run_argv(argv, protocol, cwd, limits)
 }
 
 /// Return the command argv for a built-in profile.
@@ -481,31 +550,31 @@ pub fn profile_command(
     Ok(argv)
 }
 
-/// Execute one argv vector and parse bounded captured output.
+/// Execute one argv vector and incrementally parse bounded captured output.
 ///
 /// # Contract
-/// - requires: `command` must contain an executable at index zero and any
-///   following arguments already split into argv form.
-/// - ensures: preserves stdout and stderr separately in the invocation,
-///   captures at most [`BATCH_STREAM_CAPTURE_LIMIT`] bytes per stream before
-///   UTF-8 conversion, parses their combined text, and returns a digest capped
-///   by `max_diagnostics`.
+/// - requires: `command` contains an executable at index zero and any following
+///   arguments are already split into argv form.
+/// - ensures: preserves bounded stdout and stderr prefixes separately in the
+///   invocation, spills larger streams, parses complete output without loading
+///   it into one string, and applies `limits` to output bytes and digest
+///   samples.
 /// - fails: returns invalid argument for an empty command, process errors for
-///   spawn, pipe, wait, join, capture-limit, or unparsable non-zero output,
-///   UTF-8 errors for non-UTF-8 streams, or parser errors for parse failures.
+///   spawn, pipe, wait, join, spill, output-limit, or unparsable non-zero
+///   output, UTF-8 errors for non-UTF-8 streams, or parser errors for parse
+///   failures.
 /// - panics: debug builds may panic if the executable string is empty; command
 ///   splitting itself uses `split_first` and returns an error for empty
 ///   commands.
 ///
 /// # Errors
-/// # Errors
 /// Returns an error when `command` is empty, process execution or bounded
-/// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
+/// stream processing fails, streams are not UTF-8, or parsing fails.
 fn run_argv(
     command: Vec<String>,
     protocol: Protocol,
     cwd: &Utf8Path,
-    max_diagnostics: Option<usize>,
+    limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
     let Some((executable, arguments)) = command.split_first()
@@ -518,33 +587,38 @@ fn run_argv(
         !executable.is_empty(),
         "batch executable should not be empty"
     );
-    let capture = run_child_bounded(executable, arguments, cwd)?;
-
-    let stdout = String::from_utf8(capture.stdout).map_err(|source| {
-        AifixError::utf8(format!(
-            "stdout from `{executable}` was not UTF-8: {source}"
-        ))
-    })?;
-    let stderr = String::from_utf8(capture.stderr).map_err(|source| {
-        AifixError::utf8(format!(
-            "stderr from `{executable}` was not UTF-8: {source}"
-        ))
-    })?;
-    let status_code = capture.status.code();
-    let invocation = Invocation {
-        command,
-        cwd: Some(path_to_string(cwd)),
+    let capture = run_child_captured(executable, arguments, cwd, limits.max_output_bytes)?;
+    let CapturedOutput {
+        status,
         stdout,
         stderr,
-        exit_code: status_code,
-    };
+    } = capture;
+    stdout.validate_utf8("stdout", executable)?;
+    stderr.validate_utf8("stderr", executable)?;
+    let parse_result = parse_captured_output(protocol, &stdout, &stderr);
+    let stdout_bytes = stdout.total_bytes();
+    let stderr_bytes = stderr.total_bytes();
+    let stdout_text = stdout.into_retained_string("stdout", executable)?;
+    let stderr_text = stderr.into_retained_string("stderr", executable)?;
+    let invocation = Invocation::with_captured_output(
+        command,
+        cwd,
+        stdout_text,
+        stderr_text,
+        stdout_bytes,
+        stderr_bytes,
+        status.code(),
+    );
 
-    let parse_input = parse_input(&invocation);
-    match parse_diagnostics(protocol, &parse_input) {
-        | Ok(diagnostics) => Ok(build_digest(diagnostics, invocation, max_diagnostics)),
-        | Err(error) if !capture.status.success() => Err(AifixError::process(format!(
+    match parse_result {
+        | Ok(diagnostics) => Ok(build_digest(
+            diagnostics,
+            invocation,
+            limits.max_diagnostics,
+        )),
+        | Err(error) if !status.success() => Err(AifixError::process(format!(
             "command exited with status {status} and output was not parseable: {error}",
-            status = status_label(capture.status.code())
+            status = status_label(status.code())
         ))),
         | Err(error) => Err(error),
     }
@@ -647,12 +721,29 @@ fn run_auto_selected_profile(
     config: &Config,
     profile: &BatchProfileInfo,
     cwd: &Utf8Path,
+    max_output_override: Option<usize>,
 ) -> Result<Digest, AifixError>
 {
-    config.profiles.get(&profile.name).map_or_else(
-        || run_profile_with_limit(&profile.name, &[], profile.protocol, cwd, None),
+    let configured = config.profiles.get(&profile.name);
+    let max_output_bytes = max_output_override
+        .or_else(|| {
+            let selected_config = configured?;
+            selected_config.max_output_bytes
+        })
+        .or(config.max_output_bytes)
+        .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
+    let limits = BatchLimits::new(None, max_output_bytes);
+    configured.map_or_else(
+        || run_profile_with_limits(&profile.name, &[], profile.protocol, cwd, limits),
         |configured| {
-            run_configured_profile(&profile.name, configured, &[], profile.protocol, cwd, None)
+            run_configured_profile(
+                &profile.name,
+                configured,
+                &[],
+                profile.protocol,
+                cwd,
+                limits,
+            )
         },
     )
 }
@@ -854,39 +945,195 @@ fn classify_error(error: &AifixError) -> &'static str
     }
 }
 
+/// Unique suffix source for private spill files.
+static NEXT_SPILL_ID: AtomicU64 = AtomicU64::new(0);
+
 /// Captured child-process result with stdout and stderr retained separately.
-struct BoundedOutput
+struct CapturedOutput
 {
     /// Process exit status reported after the child completed.
     status: ExitStatus,
-    /// Captured stdout bytes, never longer than [`BATCH_STREAM_CAPTURE_LIMIT`].
-    stdout: Vec<u8>,
-    /// Captured stderr bytes, never longer than [`BATCH_STREAM_CAPTURE_LIMIT`].
-    stderr: Vec<u8>,
+    /// Complete stdout storage plus its bounded retained prefix.
+    stdout: CapturedStream,
+    /// Complete stderr storage plus its bounded retained prefix.
+    stderr: CapturedStream,
 }
 
-/// Spawn a command and capture stdout and stderr with explicit per-stream caps.
+/// One child stream with bounded invocation retention and optional complete
+/// spill storage.
+struct CapturedStream
+{
+    /// Bytes retained for invocation metadata and complete small output.
+    retained: Vec<u8>,
+    /// Total bytes observed for the stream.
+    total_bytes: usize,
+    /// Last byte observed, used to preserve stream concatenation semantics.
+    last_byte: Option<u8>,
+    /// Private complete-output storage when the stream exceeded retention.
+    spill: Option<SpillFile>,
+}
+
+impl CapturedStream
+{
+    /// Return the complete byte count observed for this stream.
+    #[must_use]
+    #[inline]
+    fn total_bytes(&self) -> usize
+    {
+        self.total_bytes
+    }
+
+    /// Return whether this stream produced no bytes.
+    #[must_use]
+    #[inline]
+    fn is_empty(&self) -> bool
+    {
+        self.total_bytes == 0
+    }
+
+    /// Return the final byte observed for this stream.
+    #[must_use]
+    #[inline]
+    fn last_byte(&self) -> Option<u8>
+    {
+        self.last_byte
+    }
+
+    /// Open the complete stream for parsing or validation.
+    ///
+    /// # Errors
+    /// Returns a process error when a spilled stream cannot be reopened.
+    fn open_reader(&self) -> Result<Box<dyn Read + '_>, AifixError>
+    {
+        self.spill.as_ref().map_or_else(
+            || {
+                let reader: Box<dyn Read + '_> = Box::new(Cursor::new(self.retained.as_slice()));
+                Ok(reader)
+            },
+            SpillFile::open_reader,
+        )
+    }
+
+    /// Validate complete stream bytes before parser dispatch.
+    ///
+    /// # Errors
+    /// Returns process errors for spill reads and UTF-8 errors for invalid
+    /// stream bytes.
+    fn validate_utf8(
+        &self,
+        stream: &str,
+        executable: &str,
+    ) -> Result<(), AifixError>
+    {
+        let mut reader = self.open_reader()?;
+        validate_reader_utf8(&mut *reader, stream, executable)
+    }
+
+    /// Convert the retained prefix into invocation metadata.
+    ///
+    /// # Errors
+    /// Returns a UTF-8 error if the retained bytes are invalid. A valid
+    /// complete stream may end its retained prefix inside one scalar; that
+    /// incomplete suffix is omitted.
+    fn into_retained_string(
+        self,
+        stream: &str,
+        executable: &str,
+    ) -> Result<String, AifixError>
+    {
+        retained_utf8_string(self.retained, stream, executable)
+    }
+}
+
+/// Private temporary file used for output above the retention threshold.
+struct SpillFile
+{
+    /// File path removed when the capture leaves scope.
+    path: PathBuf,
+}
+
+impl SpillFile
+{
+    /// Create one collision-resistant private spill file.
+    ///
+    /// # Errors
+    /// Returns a process error when no file can be created.
+    fn create(stream: &str) -> Result<(Self, File), AifixError>
+    {
+        for _ in 0_u8 .. 128_u8 {
+            let sequence = NEXT_SPILL_ID.fetch_add(1, Ordering::Relaxed);
+            let filename = format!("aifix-{}-{sequence}-{stream}.capture", std::process::id());
+            let path = std::env::temp_dir().join(filename);
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+
+                options.mode(0o600)
+            };
+            match options.open(&path) {
+                | Ok(file) => return Ok((Self { path }, file)),
+                | Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+                | Err(source) => {
+                    return Err(AifixError::process(format!(
+                        "failed to create private {stream} spill file: {source}"
+                    )));
+                },
+            }
+        }
+
+        Err(AifixError::process(format!(
+            "failed to create private {stream} spill file after repeated name collisions"
+        )))
+    }
+
+    /// Reopen complete spilled output for reading.
+    ///
+    /// # Errors
+    /// Returns a process error when the file cannot be opened.
+    fn open_reader(&self) -> Result<Box<dyn Read + '_>, AifixError>
+    {
+        let file = File::open(&self.path).map_err(|source| {
+            AifixError::process(format!("failed to reopen spilled batch output: {source}"))
+        })?;
+        let reader: Box<dyn Read> = Box::new(file);
+        Ok(reader)
+    }
+}
+
+impl Drop for SpillFile
+{
+    /// Remove private output storage after parsing and invocation construction.
+    fn drop(&mut self)
+    {
+        drop(fs::remove_file(&self.path));
+    }
+}
+
+/// Spawn a command and process stdout and stderr with explicit per-stream
+/// budgets.
 ///
 /// # Contract
 /// - requires: `executable` is a non-empty command name and `arguments` are
 ///   already split into argv entries.
-/// - ensures: waits for the process, preserves separated stdout/stderr bytes,
-///   and never retains more than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes for
-///   either stream.
-/// - fails: returns process errors for spawn, unavailable pipes, read failures,
-///   wait failures, reader-thread failures, or capture-limit overflow.
+/// - ensures: waits for the process, preserves separated bounded prefixes,
+///   spills larger complete streams, and accepts no more than
+///   `max_output_bytes` for either stream.
+/// - fails: returns process errors for spawn, unavailable pipes, read, spill,
+///   wait, reader-thread, or output-budget failures.
 /// - panics: none; reader thread panics are converted into process errors.
 ///
 /// # Errors
-/// # Errors
 /// Returns an error when the child cannot be spawned, its pipes cannot be
 /// captured, the child cannot be waited on, a stream reader fails, a stream
-/// exceeds the cap, or a reader thread panics.
-fn run_child_bounded(
+/// exceeds the budget, or a reader thread panics.
+fn run_child_captured(
     executable: &str,
     arguments: &[String],
     cwd: &Utf8Path,
-) -> Result<BoundedOutput, AifixError>
+    max_output_bytes: usize,
+) -> Result<CapturedOutput, AifixError>
 {
     let mut child = Command::new(executable)
         .args(arguments)
@@ -911,14 +1158,14 @@ fn run_child_bounded(
             return Err(error);
         },
     };
-    let stdout_reader = match spawn_stdout_reader(executable, stdout_pipe) {
+    let stdout_reader = match spawn_stdout_reader(executable, stdout_pipe, max_output_bytes) {
         | Ok(reader) => reader,
         | Err(error) => {
             terminate_child(&mut child);
             return Err(error);
         },
     };
-    let stderr_reader = match spawn_stderr_reader(executable, stderr_pipe) {
+    let stderr_reader = match spawn_stderr_reader(executable, stderr_pipe, max_output_bytes) {
         | Ok(reader) => reader,
         | Err(error) => {
             terminate_child(&mut child);
@@ -942,7 +1189,7 @@ fn run_child_bounded(
     let captured_stdout = stdout_result?;
     let captured_stderr = stderr_result?;
 
-    Ok(BoundedOutput {
+    Ok(CapturedOutput {
         status,
         stdout: captured_stdout,
         stderr: captured_stderr,
@@ -986,67 +1233,78 @@ fn take_stderr(
 fn spawn_stdout_reader(
     executable: &str,
     reader: ChildStdout,
-) -> Result<JoinHandle<Result<Vec<u8>, AifixError>>, AifixError>
+    max_output_bytes: usize,
+) -> Result<JoinHandle<Result<CapturedStream, AifixError>>, AifixError>
 {
-    spawn_stream_reader("stdout", executable, reader)
+    spawn_stream_reader("stdout", executable, reader, max_output_bytes)
 }
 
 /// Spawn a bounded stderr reader thread.
 fn spawn_stderr_reader(
     executable: &str,
     reader: ChildStderr,
-) -> Result<JoinHandle<Result<Vec<u8>, AifixError>>, AifixError>
+    max_output_bytes: usize,
+) -> Result<JoinHandle<Result<CapturedStream, AifixError>>, AifixError>
 {
-    spawn_stream_reader("stderr", executable, reader)
+    spawn_stream_reader("stderr", executable, reader, max_output_bytes)
 }
 
-/// Spawn a reader thread that captures one stream up to the configured limit.
+/// Spawn a reader thread that spills after the in-memory retention limit.
 ///
 /// # Contract
 /// - requires: `stream` and `executable` are diagnostic labels, and `reader`
 ///   yields bytes from one child-process pipe.
-/// - ensures: returns a join handle whose successful value contains no more
-///   than [`BATCH_STREAM_CAPTURE_LIMIT`] bytes.
-/// - fails: thread-spawn errors are returned immediately; read failures and
-///   capture-limit overflow are returned by the thread.
+/// - ensures: returns a join handle whose successful value retains at most
+///   [`BATCH_STREAM_RETENTION_LIMIT`] bytes in memory and stores no more than
+///   `max_output_bytes` total bytes.
+/// - fails: thread-spawn errors are returned immediately; read, spill, and
+///   output-limit failures are returned by the thread.
 /// - panics: none.
-fn spawn_stream_reader<R>(
+fn spawn_stream_reader<Reader>(
     stream: &'static str,
     executable: &str,
-    mut reader: R,
-) -> Result<JoinHandle<Result<Vec<u8>, AifixError>>, AifixError>
+    mut reader: Reader,
+    max_output_bytes: usize,
+) -> Result<JoinHandle<Result<CapturedStream, AifixError>>, AifixError>
 where
-    R: Read + Send + 'static,
+    Reader: Read + Send + 'static,
 {
     let executable = executable.to_owned();
     thread::Builder::new()
-        .spawn(move || read_stream_bounded(stream, &executable, &mut reader))
+        .spawn(move || read_stream_captured(stream, &executable, &mut reader, max_output_bytes))
         .map_err(|source| AifixError::process(format!("failed to spawn {stream} reader: {source}")))
 }
 
-/// Read one stream into memory with an explicit byte cap.
+/// Read one stream with bounded memory and bounded total storage.
 ///
 /// # Contract
 /// - requires: `reader` is an open process stream, `stream` names it, and
 ///   `executable` names the producing command.
-/// - ensures: returns captured bytes whose length is less than or equal to
-///   [`BATCH_STREAM_CAPTURE_LIMIT`].
-/// - fails: returns process errors for IO failures or cap overflow.
+/// - ensures: retains at most [`BATCH_STREAM_RETENTION_LIMIT`] bytes in memory,
+///   spills complete larger output privately, and accepts no more than
+///   `max_output_bytes`.
+/// - fails: returns process errors for read, spill, or output-limit failures.
 /// - panics: none.
 ///
 /// # Errors
-/// # Errors
-/// Returns an error when reading fails or the stream exceeds the cap.
-fn read_stream_bounded<R>(
+/// Returns an error when reading or spilling fails or the stream exceeds its
+/// processing budget.
+fn read_stream_captured<Reader>(
     stream: &str,
     executable: &str,
-    reader: &mut R,
-) -> Result<Vec<u8>, AifixError>
+    reader: &mut Reader,
+    max_output_bytes: usize,
+) -> Result<CapturedStream, AifixError>
 where
-    R: Read,
+    Reader: Read,
 {
-    let mut output = Vec::new();
+    let retention_limit = BATCH_STREAM_RETENTION_LIMIT.min(max_output_bytes);
+    let mut retained = Vec::new();
+    let mut spill: Option<(SpillFile, File)> = None;
+    let mut total_bytes = 0usize;
+    let mut last_byte = None;
     let mut buffer = [0_u8; 8192];
+
     loop {
         let read = reader.read(&mut buffer).map_err(|source| {
             AifixError::process(format!(
@@ -1054,23 +1312,92 @@ where
             ))
         })?;
         if read == 0 {
-            return Ok(output);
+            if let Some((spill_file, mut writer)) = spill {
+                writer.flush().map_err(|source| {
+                    AifixError::process(format!(
+                        "failed to flush spilled {stream} from `{executable}`: {source}"
+                    ))
+                })?;
+                drop(writer);
+                return Ok(CapturedStream {
+                    retained,
+                    total_bytes,
+                    last_byte,
+                    spill: Some(spill_file),
+                });
+            }
+            return Ok(CapturedStream {
+                total_bytes: retained.len(),
+                last_byte: retained.last().copied(),
+                retained,
+                spill: None,
+            });
         }
-        let remaining = BATCH_STREAM_CAPTURE_LIMIT.saturating_sub(output.len());
-        if read > remaining {
-            return Err(AifixError::output_limit(
-                stream,
-                executable,
-                BATCH_STREAM_CAPTURE_LIMIT,
-            ));
-        }
+
         let Some(chunk) = buffer.get(.. read)
         else {
             return Err(AifixError::process(format!(
                 "{stream} from `{executable}` produced an invalid read length"
             )));
         };
-        output.extend_from_slice(chunk);
+        let Some(next_total) = total_bytes.checked_add(read)
+        else {
+            return Err(AifixError::output_limit(
+                stream,
+                executable,
+                max_output_bytes,
+            ));
+        };
+        if next_total > max_output_bytes {
+            return Err(AifixError::output_limit(
+                stream,
+                executable,
+                max_output_bytes,
+            ));
+        }
+
+        let wrote_to_spill: bool = spill.as_mut().map_or_else(
+            || Ok(false),
+            |spilled| -> Result<bool, AifixError> {
+                spilled.1.write_all(chunk).map_err(|source| {
+                    AifixError::process(format!(
+                        "failed to spill {stream} from `{executable}`: {source}"
+                    ))
+                })?;
+                Ok(true)
+            },
+        )?;
+        if !wrote_to_spill {
+            if next_total <= retention_limit {
+                retained.extend_from_slice(chunk);
+            }
+            else {
+                let retained_from_chunk = retention_limit.saturating_sub(retained.len());
+                let Some((retained_chunk, spilled_chunk)) =
+                    chunk.split_at_checked(retained_from_chunk)
+                else {
+                    return Err(AifixError::process(format!(
+                        "{stream} from `{executable}` produced an invalid retained prefix length"
+                    )));
+                };
+                retained.extend_from_slice(retained_chunk);
+                let (spill_file, mut writer) = SpillFile::create(stream)?;
+                writer.write_all(&retained).map_err(|source| {
+                    AifixError::process(format!(
+                        "failed to initialize spilled {stream} from `{executable}`: {source}"
+                    ))
+                })?;
+                writer.write_all(spilled_chunk).map_err(|source| {
+                    AifixError::process(format!(
+                        "failed to spill {stream} from `{executable}`: {source}"
+                    ))
+                })?;
+                spill = Some((spill_file, writer));
+            }
+        }
+
+        total_bytes = next_total;
+        last_byte = chunk.last().copied();
     }
 }
 
@@ -1078,20 +1405,18 @@ where
 ///
 /// # Contract
 /// - requires: `handle` belongs to a reader spawned by [`spawn_stream_reader`],
-///   `stream` names the captured stream, and `executable` names the child
-///   process.
-/// - ensures: returns bounded bytes produced by the reader thread.
+///   `stream` names the captured stream, and `executable` names the child.
+/// - ensures: returns the complete bounded stream representation.
 /// - fails: propagates reader errors and maps thread panics to process errors.
 /// - panics: none.
 ///
 /// # Errors
-/// # Errors
 /// Returns an error when the reader returned one or the thread panicked.
 fn join_reader(
-    handle: JoinHandle<Result<Vec<u8>, AifixError>>,
+    handle: JoinHandle<Result<CapturedStream, AifixError>>,
     stream: &str,
     executable: &str,
-) -> Result<Vec<u8>, AifixError>
+) -> Result<CapturedStream, AifixError>
 {
     handle.join().unwrap_or_else(|_| {
         Err(AifixError::process(format!(
@@ -1119,30 +1444,150 @@ fn strings(values: &[&str]) -> Vec<String>
     argv
 }
 
-/// Combine stdout and stderr only for parsing while preserving them separately.
-fn parse_input(invocation: &Invocation) -> String
+/// Parse complete stdout followed by stderr without joining them in memory.
+///
+/// # Errors
+/// Returns process, IO, JSON, or parser errors from stream reopening and
+/// adapter dispatch.
+fn parse_captured_output(
+    protocol: Protocol,
+    stdout: &CapturedStream,
+    stderr: &CapturedStream,
+) -> Result<Vec<crate::model::Diagnostic>, AifixError>
 {
-    match (invocation.stdout.is_empty(), invocation.stderr.is_empty()) {
-        | (true, true) => String::new(),
-        | (false, true) => invocation.stdout.clone(),
-        | (true, false) => invocation.stderr.clone(),
-        | (false, false) => {
-            let mut combined =
-                String::with_capacity(invocation.stdout.len() + invocation.stderr.len() + 1);
-            combined.push_str(&invocation.stdout);
-            if !combined.ends_with('\n') {
-                combined.push('\n');
-            }
-            combined.push_str(&invocation.stderr);
-            combined
+    let selected = if protocol == Protocol::Auto {
+        detect_auto_protocol_reader(combined_captured_reader(stdout, stderr)?)?
+    }
+    else {
+        AutoReaderProtocol::Selected(protocol)
+    };
+
+    match selected {
+        | AutoReaderProtocol::Selected(selected) => {
+            parse_diagnostics_reader(selected, combined_captured_reader(stdout, stderr)?)
+        },
+        | AutoReaderProtocol::CompleteJson => {
+            parse_complete_json_reader(combined_captured_reader(stdout, stderr)?)
         },
     }
 }
 
-/// Render a path as UTF-8 text for invocation metadata.
-fn path_to_string(path: &Utf8Path) -> String
+/// Reopen stdout followed by stderr as one buffered parser stream.
+///
+/// # Errors
+/// Returns a process error when either spilled stream cannot be reopened.
+fn combined_captured_reader<'capture>(
+    stdout: &'capture CapturedStream,
+    stderr: &'capture CapturedStream,
+) -> Result<impl BufRead + 'capture, AifixError>
 {
-    path.to_owned().into_string()
+    let stdout_reader = stdout.open_reader()?;
+    let stderr_reader = stderr.open_reader()?;
+    let separator: &'static [u8] =
+        if !stdout.is_empty() && !stderr.is_empty() && stdout.last_byte() != Some(b'\n') {
+            b"\n"
+        }
+        else {
+            b""
+        };
+    let combined = stdout_reader
+        .chain(Cursor::new(separator))
+        .chain(stderr_reader);
+    Ok(BufReader::new(combined))
+}
+
+/// Validate UTF-8 incrementally without retaining the complete stream.
+///
+/// # Errors
+/// Returns a process error for read failures and a UTF-8 error for malformed or
+/// incomplete byte sequences.
+fn validate_reader_utf8<Reader>(
+    reader: &mut Reader,
+    stream: &str,
+    executable: &str,
+) -> Result<(), AifixError>
+where
+    Reader: Read + ?Sized,
+{
+    let mut buffer = [0_u8; 8195];
+    let mut pending = 0usize;
+    let mut validated_bytes = 0usize;
+    loop {
+        let Some(read_buffer) = buffer.get_mut(pending ..)
+        else {
+            return Err(AifixError::process(
+                "UTF-8 validator pending-byte count exceeded its buffer",
+            ));
+        };
+        let read = reader.read(read_buffer).map_err(|source| {
+            AifixError::process(format!(
+                "failed to validate {stream} from `{executable}`: {source}"
+            ))
+        })?;
+        let total = pending + read;
+        if total == 0 {
+            return Ok(());
+        }
+        if read == 0 {
+            return Err(AifixError::utf8(format!(
+                "{stream} from `{executable}` ended with incomplete UTF-8 at byte {validated_bytes}"
+            )));
+        }
+
+        let Some(candidate) = buffer.get(.. total)
+        else {
+            return Err(AifixError::process(
+                "UTF-8 validator read length exceeded its buffer",
+            ));
+        };
+        match core::str::from_utf8(candidate) {
+            | Ok(_) => {
+                validated_bytes += total;
+                pending = 0;
+            },
+            | Err(error) if error.error_len().is_none() => {
+                let valid_up_to = error.valid_up_to();
+                validated_bytes += valid_up_to;
+                pending = total - valid_up_to;
+                buffer.copy_within(valid_up_to .. total, 0);
+            },
+            | Err(error) => {
+                return Err(AifixError::utf8(format!(
+                    "{stream} from `{executable}` was not UTF-8 at byte {}",
+                    validated_bytes + error.valid_up_to()
+                )));
+            },
+        }
+    }
+}
+
+/// Convert a validated retained prefix to text, omitting an incomplete suffix.
+///
+/// # Errors
+/// Returns a UTF-8 error when `bytes` contains malformed data rather than only
+/// a valid prefix ending inside one scalar.
+fn retained_utf8_string(
+    bytes: Vec<u8>,
+    stream: &str,
+    executable: &str,
+) -> Result<String, AifixError>
+{
+    match String::from_utf8(bytes) {
+        | Ok(text) => Ok(text),
+        | Err(source) if source.utf8_error().error_len().is_none() => {
+            let valid_up_to = source.utf8_error().valid_up_to();
+            let mut retained_bytes = source.into_bytes();
+            retained_bytes.truncate(valid_up_to);
+            String::from_utf8(retained_bytes).map_err(|error| {
+                AifixError::utf8(format!(
+                    "retained {stream} from `{executable}` was not UTF-8: {error}"
+                ))
+            })
+        },
+        | Err(source) => Err(AifixError::utf8(format!(
+            "retained {stream} from `{executable}` was not UTF-8: {source}"
+        ))),
+    }
 }
 
 /// Render an exit code for error messages.
@@ -1162,27 +1607,104 @@ mod tests
 
     use super::*;
 
-    /// Verify that the stream reader rejects input one byte above the cap.
+    /// Verify that output above the retention threshold spills while remaining
+    /// completely readable.
     #[test]
-    fn bounded_stream_rejects_one_byte_over_cap() -> Result<(), AifixError>
+    fn captured_stream_spills_without_truncating_parser_input() -> Result<(), AifixError>
     {
-        let payload = vec![b'x'; BATCH_STREAM_CAPTURE_LIMIT.saturating_add(1)];
-        let mut reader = io::Cursor::new(payload);
-        let error = match read_stream_bounded("stdout", "fixture", &mut reader) {
+        let payload = vec![b'x'; BATCH_STREAM_RETENTION_LIMIT.saturating_add(8193)];
+        let mut reader = io::Cursor::new(payload.clone());
+        let captured = read_stream_captured("stdout", "fixture", &mut reader, payload.len())?;
+
+        assert_eq!(captured.total_bytes(), payload.len());
+        let spill_path = captured
+            .spill
+            .as_ref()
+            .map(|spill| spill.path.clone())
+            .ok_or_else(|| AifixError::process("large stream did not spill"))?;
+        assert!(
+            spill_path.try_exists().map_err(AifixError::io)?,
+            "spill file should exist while captured output is alive"
+        );
+        let mut complete = Vec::new();
+        captured
+            .open_reader()?
+            .read_to_end(&mut complete)
+            .map_err(AifixError::io)?;
+        assert_eq!(complete, payload);
+        drop(captured);
+        assert!(
+            !spill_path.try_exists().map_err(AifixError::io)?,
+            "spill file should be removed when captured output drops"
+        );
+        Ok(())
+    }
+
+    /// Verify incremental UTF-8 validation across chunk boundaries and strict
+    /// rejection of malformed complete streams and retained prefixes.
+    #[test]
+    fn utf8_validation_handles_boundaries_and_invalid_bytes() -> Result<(), AifixError>
+    {
+        let mut split_scalar = vec![b'x'; 8194];
+        split_scalar.extend_from_slice("é".as_bytes());
+        let mut valid_reader = io::Cursor::new(split_scalar);
+        validate_reader_utf8(&mut valid_reader, "stdout", "fixture")?;
+
+        let mut invalid = vec![b'x'; 8194];
+        invalid.push(0xff);
+        let mut invalid_reader = io::Cursor::new(invalid);
+        let invalid_error = match validate_reader_utf8(&mut invalid_reader, "stdout", "fixture") {
+            | Ok(()) => {
+                return Err(AifixError::process(
+                    "invalid complete stream unexpectedly passed UTF-8 validation",
+                ));
+            },
+            | Err(error) => error,
+        };
+        assert!(
+            invalid_error.to_string().contains("was not UTF-8 at byte"),
+            "invalid complete stream should identify its UTF-8 failure: {invalid_error}"
+        );
+
+        let retained = retained_utf8_string(vec![b'x', 0xc3], "stdout", "fixture")?;
+        assert_eq!(retained, "x");
+        let retained_error = match retained_utf8_string(vec![0xff], "stdout", "fixture") {
             | Ok(_) => {
                 return Err(AifixError::process(
-                    "bounded stream reader unexpectedly accepted over-limit input",
+                    "invalid retained prefix unexpectedly passed UTF-8 conversion",
+                ));
+            },
+            | Err(error) => error,
+        };
+        assert!(
+            retained_error.to_string().contains("was not UTF-8"),
+            "invalid retained prefix should report UTF-8 failure: {retained_error}"
+        );
+        Ok(())
+    }
+
+    /// Verify that the explicit processing budget still rejects oversized
+    /// output.
+    #[test]
+    fn captured_stream_rejects_processing_limit_overflow() -> Result<(), AifixError>
+    {
+        let payload = vec![b'x'; 17];
+        let mut reader = io::Cursor::new(payload);
+        let error = match read_stream_captured("stdout", "fixture", &mut reader, 16) {
+            | Ok(_) => {
+                return Err(AifixError::process(
+                    "captured stream unexpectedly exceeded its processing budget",
                 ));
             },
             | Err(error) => error,
         };
         let message = error.to_string();
-        if message.contains("exceeded capture limit") {
+        if message.contains("exceeded capture limit of 16 bytes") {
             return Ok(());
         }
 
         Err(AifixError::process(format!(
-            "bounded stream reader returned unexpected error: {message}"
+            "captured stream returned unexpected error: {message}"
         )))
     }
 }

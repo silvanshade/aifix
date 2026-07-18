@@ -51,18 +51,23 @@ Consequences:
 * Custom batch profiles require an explicit executable as the first argv item.
 * Extra args are appended as argv entries after strict UTF-8 conversion.
 
-### Bound batch capture before retaining invocation output
+### Bound retained batch output while processing complete diagnostics
 
-Decision: stdout and stderr are captured separately with a 1 MiB per-stream cap.
+Decision: stdout and stderr keep separate 1 MiB prefixes in memory.
+Larger streams spill to private temporary files, remain parseable up to a configurable per-stream budget that defaults to 1 GiB, and expose their complete byte counts in invocation metadata.
 
-Rationale: batch mode stores captured output in invocation metadata and then parses it.
-Capture must be bounded before UTF-8 conversion or digest retention so large child output cannot become unbounded memory use.
+Rationale: a fixed 1 MiB capture cap rejected ordinary compiler runs with hundreds or thousands of diagnostics.
+Retaining every raw byte in memory would instead make tool output an unbounded memory input.
+Spilling separates the parser's complete-input requirement from the agent-facing invocation evidence budget.
 
 Consequences:
 
-* Over-limit streams return process errors naming the stream and executable.
-* Stdout and stderr remain separate in invocation metadata.
-* Parsing combines streams only after bounded capture and UTF-8 validation.
+* Stdout and stderr remain separate, and only their prefixes are retained in the digest.
+* Spill files use create-new names, mode `0600` on Unix, and scope-bound deletion.
+* Complete streams are validated as UTF-8 incrementally before parsing.
+* Cargo compiler-message JSONL and text protocols are parsed one record at a time; complete JSON decodes directly from readers.
+* `max_output_bytes` and `--max-output-bytes` retain a hard storage budget for runaway tools.
+* Over-budget streams return process errors naming the stream, executable, and selected budget.
 
 ### Reject malformed structured input in auto mode
 

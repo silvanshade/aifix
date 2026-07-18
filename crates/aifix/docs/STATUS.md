@@ -27,7 +27,11 @@ Current integration tests in `pipeline_cli.rs` cover:
 * TypeScript text pipeline output as markdown guidance;
 * LSP JSON pipeline output as compact JSON digest;
 * custom batch command execution through a real executable;
-* bounded rejection of over-limit custom batch stdout;
+* successful auto-detected parsing of custom batch stdout above the 1 MiB retention threshold;
+* bounded rejection at an explicit per-stream processing budget;
+* CLI, selected-profile, auto-profile, and root output-budget precedence;
+* MCP `maxOutputBytes` schema and dispatch;
+* incremental UTF-8 boundary acceptance and malformed-byte rejection;
 * strict rejection of non-UTF-8 batch extra args;
 * rejection of non-file project `aifix.toml` candidates.
 
@@ -35,7 +39,8 @@ Review hardening currently implemented:
 
 * direct process execution without shell expansion;
 * strict UTF-8 conversion for batch extra args;
-* 1 MiB per-stream bounded batch capture;
+* 1 MiB per-stream in-memory retention with private spill files and a configurable 1 GiB default processing budget;
+* incremental UTF-8 validation and record-oriented cargo JSONL and text parsing;
 * parseable nonzero diagnostic output can still render a digest;
 * malformed structured-looking `auto` input is rejected at the structured boundary;
 * TypeScript and LSP adapters validate blank fields and invalid or reversed ranges;

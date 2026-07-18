@@ -274,9 +274,9 @@ struct CompactInvocation<'digest>
     cwd: Option<&'digest str>,
     /// Process exit code, when the platform reported one.
     exit_code: Option<i32>,
-    /// Captured stdout byte length.
+    /// Complete stdout byte length, including omitted invocation bytes.
     stdout_bytes: usize,
-    /// Captured stderr byte length.
+    /// Complete stderr byte length, including omitted invocation bytes.
     stderr_bytes: usize,
 }
 
@@ -290,8 +290,8 @@ impl<'digest> CompactInvocation<'digest>
             command: &invocation.command,
             cwd: invocation.cwd.as_deref(),
             exit_code: invocation.exit_code,
-            stdout_bytes: invocation.stdout.len(),
-            stderr_bytes: invocation.stderr.len(),
+            stdout_bytes: invocation.total_stdout_bytes(),
+            stderr_bytes: invocation.total_stderr_bytes(),
         }
     }
 }

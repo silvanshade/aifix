@@ -5,6 +5,8 @@
 //! adapters preserve their raw JSON payload so downstream agents can inspect
 //! source-specific details when the normalized fields are insufficient.
 
+use std::io::BufRead;
+
 use serde_json::Value;
 
 use crate::error::AifixError;
@@ -75,6 +77,133 @@ pub fn parse_diagnostics(
         | Protocol::TypescriptText => parse_typescript_text(input),
         | Protocol::LspJson => parse_lsp_json(input),
         | Protocol::NushellText => parse_nushell_text(input),
+    }
+}
+/// Parse diagnostics from a buffered reader according to `protocol`.
+///
+/// # Contract
+/// - requires: `reader` yields UTF-8 output from the selected diagnostic
+///   protocol.
+/// - ensures: explicitly selected newline-delimited cargo, Agda, TypeScript,
+///   and generic text stream one record at a time; structured JSON decodes
+///   directly from the reader. `Auto` preserves the string parser contract for
+///   non-replayable callers; batch capture detects auto input in a separate
+///   bounded-memory pass before dispatch.
+/// - fails: returns [`AifixError::Io`] for read failures, JSON errors for
+///   malformed structured input, or parser errors for unsupported input.
+/// - panics: none.
+///
+/// # Errors
+/// Returns an error when the reader fails or the selected adapter rejects the
+/// diagnostic input.
+#[inline]
+pub fn parse_diagnostics_reader<Reader>(
+    protocol: Protocol,
+    mut reader: Reader,
+) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    match protocol {
+        | Protocol::Auto => {
+            let mut input = String::new();
+            reader.read_to_string(&mut input).map_err(AifixError::io)?;
+            parse_auto(&input)
+        },
+        | Protocol::AifixJson => {
+            let value = serde_json::from_reader(reader)?;
+            parse_aifix_value(&value)
+        },
+        | Protocol::ClippyJson => parse_clippy_json_reader(&mut reader),
+        | Protocol::AgdaText => parse_agda_text_reader(reader),
+        | Protocol::TypescriptText => parse_typescript_text_reader(reader),
+        | Protocol::LspJson => {
+            let value = serde_json::from_reader(reader)?;
+            parse_lsp_value(&value)
+        },
+        | Protocol::NushellText => parse_nushell_text_reader(reader),
+    }
+}
+
+/// Auto-detection result for replayable batch input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutoReaderProtocol
+{
+    /// Replay the input through the selected streaming adapter.
+    Selected(Protocol),
+    /// Decode one complete JSON value directly from the replayed input.
+    CompleteJson,
+}
+
+/// Detect an auto protocol in one bounded-memory pass over replayable input.
+///
+/// # Contract
+/// - requires: `reader` yields UTF-8 input that can be reopened by the caller.
+/// - ensures: preserves auto precedence: cargo JSONL, complete JSON, Agda,
+///   TypeScript, then generic text.
+/// - fails: returns an IO error when reading fails.
+/// - panics: none.
+///
+/// # Errors
+/// Returns an error when the reader cannot be consumed.
+pub(crate) fn detect_auto_protocol_reader<Reader>(
+    reader: Reader
+) -> Result<AutoReaderProtocol, AifixError>
+where
+    Reader: BufRead,
+{
+    let mut saw_cargo = false;
+    let mut saw_complete_json_prefix = false;
+    let mut saw_first_non_empty = false;
+    let mut saw_agda = false;
+    let mut saw_typescript = false;
+
+    for line in reader.lines() {
+        let line = line.map_err(AifixError::io)?;
+        let trimmed = line.trim();
+        if !saw_first_non_empty && !trimmed.is_empty() {
+            saw_first_non_empty = true;
+            saw_complete_json_prefix = matches!(trimmed.as_bytes().first(), Some(b'{' | b'['));
+        }
+        saw_cargo |= is_cargo_json_line(&line);
+        saw_agda |= parse_agda_header(&line).is_some() || is_agda_status_line(&line);
+        saw_typescript |= parse_typescript_line(&line).is_some();
+    }
+
+    if saw_cargo {
+        Ok(AutoReaderProtocol::Selected(Protocol::ClippyJson))
+    }
+    else if saw_complete_json_prefix {
+        Ok(AutoReaderProtocol::CompleteJson)
+    }
+    else if saw_agda {
+        Ok(AutoReaderProtocol::Selected(Protocol::AgdaText))
+    }
+    else if saw_typescript {
+        Ok(AutoReaderProtocol::Selected(Protocol::TypescriptText))
+    }
+    else {
+        Ok(AutoReaderProtocol::Selected(Protocol::NushellText))
+    }
+}
+
+/// Parse one auto-detected complete JSON payload without an intermediate
+/// string.
+///
+/// # Errors
+/// Returns JSON or parser errors for malformed or unsupported structured input.
+pub(crate) fn parse_complete_json_reader<Reader>(
+    reader: Reader
+) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    let value = serde_json::from_reader(reader)?;
+    if lsp_json_shape(&value) {
+        parse_lsp_value(&value)
+    }
+    else {
+        parse_aifix_value(&value)
     }
 }
 
@@ -220,6 +349,145 @@ fn parse_aifix_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
     Err(AifixError::parser("aifix JSON did not contain diagnostics"))
 }
 
+/// Incremental state for newline-delimited cargo compiler messages.
+struct ClippyJsonParser
+{
+    /// Normalized diagnostics recovered from valid compiler-message records.
+    diagnostics: Vec<Diagnostic>,
+    /// Whether any input record was valid JSON.
+    saw_json: bool,
+    /// Whether any valid JSON record had the compiler-message reason.
+    saw_compiler_message: bool,
+    /// First structured failure retained for deterministic error reporting.
+    first_structured_error: Option<AifixError>,
+}
+
+impl ClippyJsonParser
+{
+    /// Construct empty parser state.
+    ///
+    /// # Contract
+    /// - ensures: no records or diagnostics have been observed.
+    /// - fails: none.
+    /// - panics: none.
+    #[must_use]
+    #[inline]
+    fn new() -> Self
+    {
+        Self {
+            diagnostics: Vec::new(),
+            saw_json: false,
+            saw_compiler_message: false,
+            first_structured_error: None,
+        }
+    }
+
+    /// Consume one possibly noisy cargo-output line.
+    ///
+    /// # Contract
+    /// - requires: `line` is one UTF-8 record without assumptions about
+    ///   surrounding records.
+    /// - ensures: ignores blank and non-compiler cargo records, retains valid
+    ///   diagnostics, and records only the first structured failure.
+    /// - fails: none; recoverable per-record failures are retained in state.
+    /// - panics: none.
+    fn push_line(
+        &mut self,
+        line: &str,
+    )
+    {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+
+        let value = match serde_json::from_str::<Value>(line) {
+            | Ok(value) => value,
+            | Err(error) => {
+                if self.first_structured_error.is_none() {
+                    self.first_structured_error = Some(AifixError::Json(error));
+                }
+                return;
+            },
+        };
+        self.saw_json = true;
+        if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
+            return;
+        }
+        self.saw_compiler_message = true;
+        let Some(message) = value.get("message")
+        else {
+            if self.first_structured_error.is_none() {
+                self.first_structured_error = Some(AifixError::parser(
+                    "cargo compiler-message missing message object",
+                ));
+            }
+            return;
+        };
+        let Some(diagnostic) = compiler_message_to_diagnostic(message, value.clone())
+        else {
+            if self.first_structured_error.is_none() {
+                self.first_structured_error = Some(AifixError::parser(
+                    "cargo compiler-message contained no non-empty message text",
+                ));
+            }
+            return;
+        };
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// Finalize cargo parsing after all records have been consumed.
+    ///
+    /// # Contract
+    /// - ensures: valid diagnostics take precedence over adjacent malformed
+    ///   records; cargo streams containing only non-diagnostic JSON succeed
+    ///   empty.
+    /// - fails: returns the first structured error when no diagnostic was
+    ///   recovered, or a parser error when no cargo JSON was observed.
+    /// - panics: none.
+    fn finish(self) -> Result<Vec<Diagnostic>, AifixError>
+    {
+        if !self.diagnostics.is_empty() {
+            return Ok(self.diagnostics);
+        }
+        if let Some(error) = self.first_structured_error {
+            return Err(error);
+        }
+        if self.saw_json && !self.saw_compiler_message {
+            return Ok(self.diagnostics);
+        }
+
+        Err(AifixError::parser(
+            "clippy JSON input did not contain compiler messages",
+        ))
+    }
+}
+
+/// Parse newline-delimited cargo compiler messages from a buffered reader.
+///
+/// # Contract
+/// - requires: `reader` yields UTF-8 cargo output.
+/// - ensures: retains parser state proportional to normalized diagnostics plus
+///   the largest individual input line, not total input bytes.
+/// - fails: returns IO, JSON, or parser errors under the same conditions as
+///   [`parse_clippy_json`].
+/// - panics: none.
+fn parse_clippy_json_reader<Reader>(reader: &mut Reader) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    let mut parser = ClippyJsonParser::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).map_err(AifixError::io)?;
+        if read == 0 {
+            return parser.finish();
+        }
+        parser.push_line(&line);
+    }
+}
+
 /// Parse newline-delimited cargo compiler-message JSON.
 ///
 /// # Contract
@@ -234,60 +502,11 @@ fn parse_aifix_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 /// - panics: none.
 fn parse_clippy_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
-    let mut diagnostics = Vec::new();
-    let mut saw_json = false;
-    let mut saw_compiler_message = false;
-    let mut first_structured_error = None;
-
-    for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let value = match serde_json::from_str::<Value>(line) {
-            | Ok(value) => value,
-            | Err(error) => {
-                if first_structured_error.is_none() {
-                    first_structured_error = Some(AifixError::Json(error));
-                }
-                continue;
-            },
-        };
-        saw_json = true;
-        if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
-            continue;
-        }
-        saw_compiler_message = true;
-        let Some(message) = value.get("message")
-        else {
-            if first_structured_error.is_none() {
-                first_structured_error = Some(AifixError::parser(
-                    "cargo compiler-message missing message object",
-                ));
-            }
-            continue;
-        };
-        let Some(diagnostic) = compiler_message_to_diagnostic(message, value.clone())
-        else {
-            if first_structured_error.is_none() {
-                first_structured_error = Some(AifixError::parser(
-                    "cargo compiler-message contained no non-empty message text",
-                ));
-            }
-            continue;
-        };
-        diagnostics.push(diagnostic);
+    let mut parser = ClippyJsonParser::new();
+    for line in input.lines() {
+        parser.push_line(line);
     }
-
-    if !diagnostics.is_empty() {
-        return Ok(diagnostics);
-    }
-    if let Some(error) = first_structured_error {
-        return Err(error);
-    }
-    if saw_json && !saw_compiler_message {
-        return Ok(diagnostics);
-    }
-
-    Err(AifixError::parser(
-        "clippy JSON input did not contain compiler messages",
-    ))
+    parser.finish()
 }
 
 /// Convert one rustc compiler message object into a normalized diagnostic.
@@ -443,19 +662,50 @@ fn compiler_span(span: &Value) -> Option<Span>
 /// - panics: none.
 fn parse_typescript_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
-    let diagnostics = input
-        .lines()
-        .filter_map(parse_typescript_line)
-        .collect::<Vec<_>>();
+    parse_typescript_lines(input.lines().map(Ok::<_, AifixError>))
+}
 
-    if diagnostics.is_empty() && !input.trim().is_empty() {
+/// Parse TypeScript diagnostics incrementally from a buffered reader.
+///
+/// # Errors
+/// Returns IO errors from the reader or a parser error when non-empty input
+/// contains no TypeScript diagnostics.
+fn parse_typescript_text_reader<Reader>(reader: Reader) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    parse_typescript_lines(reader.lines().map(|line| line.map_err(AifixError::io)))
+}
+
+/// Normalize a fallible sequence of TypeScript diagnostic lines.
+///
+/// # Errors
+/// Returns line-source errors or a parser error when non-empty input contains
+/// no TypeScript diagnostics.
+fn parse_typescript_lines<Lines, Line>(lines: Lines) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Lines: IntoIterator<Item = Result<Line, AifixError>>,
+    Line: AsRef<str>,
+{
+    let mut diagnostics = Vec::new();
+    let mut saw_non_empty = false;
+    for line in lines {
+        let line = line?;
+        let line = line.as_ref();
+        saw_non_empty |= !line.trim().is_empty();
+        if let Some(diagnostic) = parse_typescript_line(line) {
+            diagnostics.push(diagnostic);
+        }
+    }
+
+    if diagnostics.is_empty() && saw_non_empty {
         return Err(AifixError::parser(
             "typescript text input did not contain TS diagnostics",
         ));
     }
 
     debug_assert!(
-        input.trim().is_empty() || !diagnostics.is_empty(),
+        !saw_non_empty || !diagnostics.is_empty(),
         "non-empty successful TypeScript parsing must produce diagnostics"
     );
     Ok(diagnostics)
@@ -572,11 +822,38 @@ fn probe_agda_text(input: &str) -> AutoProbe
 /// - panics: none; malformed candidate headers are treated as non-matches.
 fn parse_agda_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
+    parse_agda_lines(input.lines().map(Ok::<_, AifixError>))
+}
+
+/// Parse Agda diagnostics incrementally from a buffered reader.
+///
+/// # Errors
+/// Returns IO errors from the reader or a parser error when non-status input
+/// contains no Agda diagnostic header.
+fn parse_agda_text_reader<Reader>(reader: Reader) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    parse_agda_lines(reader.lines().map(|line| line.map_err(AifixError::io)))
+}
+
+/// Normalize a fallible sequence of Agda output lines.
+///
+/// # Errors
+/// Returns line-source errors or a parser error when non-status input contains
+/// no Agda diagnostic header.
+fn parse_agda_lines<Lines, Line>(lines: Lines) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Lines: IntoIterator<Item = Result<Line, AifixError>>,
+    Line: AsRef<str>,
+{
     let mut diagnostics = Vec::new();
     let mut current: Option<AgdaDiagnosticBuilder> = None;
     let mut saw_non_status_line = false;
 
-    for line in input.lines() {
+    for line in lines {
+        let line = line?;
+        let line = line.as_ref();
         if is_agda_status_line(line) {
             continue;
         }
@@ -604,7 +881,7 @@ fn parse_agda_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
     }
 
     debug_assert!(
-        input.trim().is_empty() || !diagnostics.is_empty() || !saw_non_status_line,
+        !diagnostics.is_empty() || !saw_non_status_line,
         "non-empty successful Agda parsing must produce diagnostics or contain only status lines"
     );
     Ok(diagnostics)
@@ -1023,21 +1300,56 @@ fn lsp_span(
 /// - panics: none.
 fn parse_nushell_text(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
-    let diagnostics = input
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(|line| Diagnostic::new("nushell", None, line_severity(line), line.to_owned()))
-        .collect::<Vec<_>>();
+    parse_nushell_lines(input.lines().map(Ok::<_, AifixError>))
+}
 
-    if diagnostics.is_empty() && !input.trim().is_empty() {
+/// Parse generic diagnostics incrementally from a buffered reader.
+///
+/// # Errors
+/// Returns IO errors from the reader or a parser error when non-empty input
+/// yields no diagnostics.
+fn parse_nushell_text_reader<Reader>(reader: Reader) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Reader: BufRead,
+{
+    parse_nushell_lines(reader.lines().map(|line| line.map_err(AifixError::io)))
+}
+
+/// Normalize a fallible sequence of generic diagnostic lines.
+///
+/// # Errors
+/// Returns line-source errors or a parser error when non-empty input yields no
+/// diagnostics.
+fn parse_nushell_lines<Lines, Line>(lines: Lines) -> Result<Vec<Diagnostic>, AifixError>
+where
+    Lines: IntoIterator<Item = Result<Line, AifixError>>,
+    Line: AsRef<str>,
+{
+    let mut diagnostics = Vec::new();
+    let mut saw_non_empty = false;
+    for line in lines {
+        let line = line?;
+        let line = line.as_ref().trim();
+        if line.is_empty() {
+            continue;
+        }
+        saw_non_empty = true;
+        diagnostics.push(Diagnostic::new(
+            "nushell",
+            None,
+            line_severity(line),
+            line.to_owned(),
+        ));
+    }
+
+    if diagnostics.is_empty() && saw_non_empty {
         return Err(AifixError::parser(
             "nushell text input did not contain diagnostics",
         ));
     }
 
     debug_assert!(
-        input.trim().is_empty() || !diagnostics.is_empty(),
+        !saw_non_empty || !diagnostics.is_empty(),
         "non-empty successful Nushell parsing must produce diagnostics"
     );
     Ok(diagnostics)

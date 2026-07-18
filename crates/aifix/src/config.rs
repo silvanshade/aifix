@@ -63,6 +63,9 @@ pub struct Config
     /// Default maximum number of sample diagnostics per group.
     #[serde(default)]
     pub max_diagnostics: Option<usize>,
+    /// Default maximum accepted bytes from each batch output stream.
+    #[serde(default)]
+    pub max_output_bytes: Option<usize>,
     /// Named batch profiles available to `aifix batch`.
     #[serde(default, alias = "profile")]
     pub profiles: BTreeMap<String, ProfileConfig>,
@@ -85,6 +88,9 @@ pub struct ProfileConfig
     /// Profile-specific sample cap.
     #[serde(default)]
     pub max_diagnostics: Option<usize>,
+    /// Profile-specific maximum accepted bytes from each output stream.
+    #[serde(default)]
+    pub max_output_bytes: Option<usize>,
     /// Whether this configured profile participates in `batch auto`.
     #[serde(default)]
     pub auto: bool,
@@ -193,6 +199,9 @@ impl Config
         if other.max_diagnostics.is_some() {
             self.max_diagnostics = other.max_diagnostics;
         }
+        if other.max_output_bytes.is_some() {
+            self.max_output_bytes = other.max_output_bytes;
+        }
 
         for (name, profile) in other.profiles {
             self.profiles
@@ -237,6 +246,9 @@ impl ProfileConfig
         }
         if other.max_diagnostics.is_some() {
             self.max_diagnostics = other.max_diagnostics;
+        }
+        if other.max_output_bytes.is_some() {
+            self.max_output_bytes = other.max_output_bytes;
         }
         if other.auto {
             self.auto = true;

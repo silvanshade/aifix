@@ -21,7 +21,7 @@ Status vocabulary in this file is limited to `current`, `designed direction`, an
 * The benchmark fixture is intentionally small.
   It is useful as a smoke-level trend anchor, not as a representative maximum-throughput workload.
 * The current benchmark does not measure:
-  + batch process execution or bounded stdout/stderr capture;
+  + batch process execution or output spilling;
   + shell completion generation;
   + config discovery;
   + markdown, JSON, or compact JSON rendering;
@@ -30,8 +30,11 @@ Status vocabulary in this file is limited to `current`, `designed direction`, an
   + digest output byte size;
   + behavior at large diagnostic counts;
   + fuzz corpus throughput.
-* `current`: Batch capture is bounded at 1 MiB per stream before UTF-8 conversion.
-  That bound is a reliability limit, not a measured performance threshold.
+* `current`: Batch retains at most 1 MiB from each stream in memory, spills larger complete streams, and enforces a configurable per-stream processing budget that defaults to 1 GiB.
+  Line-oriented cargo and text protocols retain one input record at a time in addition to normalized diagnostics; complete JSON decodes directly from readers without an intermediate full-input string.
+* One-shot debug-build evidence collected on 2026-07-18, not a release benchmark baseline:
+  + a Wyrd Rust profile produced 13.3–13.4 MB of cargo JSONL and 1,956–1,957 deduplicated diagnostics; the former implementation aborted at 1 MiB, while spilled batch processing completed in 1.01 seconds with an 84.1 MB peak footprint reported by `/usr/bin/time -l`;
+  + 100,000 synthetic compiler-message records totaling 18.3 MB completed in 1.00 second with a 246.5 MB peak footprint; this shows that large-count memory is dominated by retained normalized diagnostics, not raw stream size.
 * `current`: Digest duplicate detection fingerprints normalized semantic fields and intentionally excludes raw payload identity.
   The optimization value is avoiding raw JSON amplification during dedupe; no allocation-count baseline has been measured.
 * `current`: `auto` protocol probing rejects malformed structured-looking inputs rather than falling back to generic text.
@@ -71,8 +74,8 @@ Status vocabulary in this file is limited to `current`, `designed direction`, an
 * Add allocation-count baselines before optimizing clone or collection behavior.
 * Keep batch-process benchmarks separate from parser benchmarks because process spawn, child output volume, and OS pipe behavior dominate different costs.
 * Keep `auto` protocol correctness tests paired with any `auto` optimization, because the security boundary is rejecting malformed structured input rather than accepting the fastest generic fallback.
-* Treat the current 1 MiB capture cap as policy input.
-  If future users need larger batch output, add benchmark and memory evidence before changing the cap.
+* Treat the 1 MiB retention threshold and configurable total-output budget as policy inputs.
+  Change either only with representative throughput and peak-memory evidence.
 * If binary protocol support is added later, benchmark it beside JSON adapters with equivalent diagnostic content rather than replacing the JSON baseline.
 
 ## open decision

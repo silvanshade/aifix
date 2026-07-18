@@ -22,7 +22,7 @@
 ### Review hardening
 
 * Batch execution now preserves direct process boundaries without shell routing.
-* Batch capture is bounded to 1 MiB per stream before UTF-8 conversion and invocation retention.
+* Batch output now retains 1 MiB per stream in invocation metadata, spills larger complete streams for parsing, and enforces a configurable 1 GiB default processing budget.
 * Batch extra args are rejected when they are not valid UTF-8.
 * Nonzero tool exits with parseable diagnostics can produce a digest; unparsable nonzero output remains a process error.
 * Agda direct CLI parsing now accepts same-line and multi-line diagnostic header locations, preserves multi-line span end positions, and treats status-only success output as zero diagnostics.

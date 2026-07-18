@@ -41,7 +41,8 @@ Built-in profiles target Rust, TypeScript, Agda, and Nushell.
 Custom profiles require an explicit command argv.
 Commands are executed without a shell.
 Extra arguments after `--` are profile-specific, must be valid UTF-8, and are rejected by `auto`.
-Each captured stream is bounded to 1 MiB.
+Each stream retains at most 1 MiB in invocation metadata; larger output spills to private temporary storage for complete parsing, with a configurable 1 GiB default per-stream processing budget.
+Override the budget with `--max-output-bytes`, root or profile `max_output_bytes` config, or MCP `maxOutputBytes`.
 A nonzero tool exit can still produce a digest when diagnostics are parseable; unparsable nonzero output remains an `aifix` process error.
 
 ### MCP mode
@@ -119,6 +120,6 @@ By default, user configuration uses the same XDG-style path policy on every plat
 If neither variable is available, there is no user config path.
 Set `AIFIX_CONFIG_DIR_MODE=platform-native` or `AIFIX_CONFIG_DIR_MODE=native` to opt in to platform-native user config directories.
 Any other `AIFIX_CONFIG_DIR_MODE` value is a configuration error.
-Config may set the default protocol, output format, maximum diagnostics, and named profile commands.
+Config may set the default protocol, output format, maximum diagnostics, per-stream output-byte budget, and named profile commands.
 Configured profiles appear in `config profiles` and MCP `aifix_batch_profiles` output alongside `auto`, built-ins, and `custom`.
 Existing non-file `aifix.toml` candidates are rejected so broken project state is visible.

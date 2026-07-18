@@ -24,6 +24,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(agda)_ Ignore progress lines
 * _(mcp)_ Import parse_diagnostics helper
 * Return error for unexpected typescript state
+* _(batch)_ Process large tool output with bounded spill files
 
 ### Refactor
 

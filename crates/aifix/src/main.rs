@@ -15,6 +15,8 @@ use std::process::ExitCode;
 
 use aifix::adapter::parse_diagnostics;
 use aifix::batch::AUTO_PROFILE;
+use aifix::batch::BatchLimits;
+use aifix::batch::DEFAULT_BATCH_STREAM_OUTPUT_LIMIT;
 use aifix::batch::available_profile_names;
 use aifix::batch::default_protocol_for_profile;
 use aifix::batch::is_known_profile;
@@ -22,7 +24,7 @@ use aifix::batch::profile_catalog;
 use aifix::batch::render_profile_catalog;
 use aifix::batch::run_auto_profile;
 use aifix::batch::run_configured_profile;
-use aifix::batch::run_profile_with_limit;
+use aifix::batch::run_profile_with_limits;
 use aifix::batch::unknown_profile_message;
 use aifix::config::Config;
 use aifix::config::config_paths;
@@ -186,6 +188,9 @@ struct BatchCommand
     /// Maximum number of sample diagnostics retained in the digest.
     #[arg(long)]
     max_diagnostics: Option<usize>,
+    /// Maximum bytes accepted from each invoked-tool output stream.
+    #[arg(long)]
+    max_output_bytes: Option<usize>,
 
     /// Diagnostic code allowed when `--fail-on-diagnostics` is active.
     #[arg(long = "expected-code", alias = "allow-code")]
@@ -451,6 +456,8 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
         .max_diagnostics
         .or(profile_max_diagnostics)
         .or(config.max_diagnostics);
+    let profile_output_limit = profile_config.and_then(|profile| profile.max_output_bytes);
+    let max_output_override = command.max_output_bytes.or(profile_output_limit);
     let expected_codes = command.expected_codes;
     let fail_on_diagnostics = command.fail_on_diagnostics;
     let extra_args = utf8_extra_args(command.extra_args)?;
@@ -459,7 +466,7 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
         if !extra_args.is_empty() {
             return Err(AifixError::invalid_argument(auto_extra_args_message(config)).into());
         }
-        run_auto_profile(config, &cwd, max_diagnostics)
+        run_auto_profile(config, &cwd, max_diagnostics, max_output_override)
     }
     else {
         if profile_config.is_none() && !is_known_profile(&profile_name, config) {
@@ -469,6 +476,10 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
             ))
             .into());
         }
+        let max_output_bytes = max_output_override
+            .or(config.max_output_bytes)
+            .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
+        let limits = BatchLimits::new(max_diagnostics, max_output_bytes);
         let protocol = command
             .protocol
             .map(Protocol::from)
@@ -481,17 +492,10 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
             .unwrap_or(Protocol::Auto);
 
         if let Some(profile) = profile_config {
-            run_configured_profile(
-                &profile_name,
-                profile,
-                &extra_args,
-                protocol,
-                &cwd,
-                max_diagnostics,
-            )?
+            run_configured_profile(&profile_name, profile, &extra_args, protocol, &cwd, limits)?
         }
         else {
-            run_profile_with_limit(&profile_name, &extra_args, protocol, &cwd, max_diagnostics)?
+            run_profile_with_limits(&profile_name, &extra_args, protocol, &cwd, limits)?
         }
     };
 

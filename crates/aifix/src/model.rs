@@ -11,6 +11,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
+use core::num::NonZeroUsize;
 use core::str::FromStr;
 
 use camino::Utf8Path;
@@ -469,12 +470,20 @@ pub struct Invocation
     /// Working directory used for command execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Captured standard output.
+    /// Retained standard-output prefix. Batch execution may omit bytes after
+    /// its in-memory retention limit while still parsing the complete stream.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub stdout: String,
-    /// Captured standard error.
+    /// Retained standard-error prefix. Batch execution may omit bytes after
+    /// its in-memory retention limit while still parsing the complete stream.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub stderr: String,
+    /// Total standard-output bytes observed when larger than `stdout`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_bytes: Option<NonZeroUsize>,
+    /// Total standard-error bytes observed when larger than `stderr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_bytes: Option<NonZeroUsize>,
     /// Process exit code, when a process was invoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
@@ -513,6 +522,8 @@ impl Invocation
             cwd: cwd.map(Into::into),
             stdout: stdout.into(),
             stderr: stderr.into(),
+            stdout_bytes: None,
+            stderr_bytes: None,
             exit_code,
         }
     }
@@ -537,6 +548,8 @@ impl Invocation
             cwd: None,
             stdout: String::new(),
             stderr: String::new(),
+            stdout_bytes: None,
+            stderr_bytes: None,
             exit_code: None,
         };
         debug_assert_eq!(
@@ -565,6 +578,77 @@ impl Invocation
             stderr,
             exit_code,
         )
+    }
+
+    /// Construct invocation metadata from bounded retained output and complete
+    /// stream byte counts.
+    ///
+    /// # Contract
+    /// - requires: `stdout_bytes >= stdout.len()` and `stderr_bytes >=
+    ///   stderr.len()`.
+    /// - ensures: preserves retained prefixes and serializes total byte counts
+    ///   only when bytes were omitted.
+    /// - fails: none; construction is infallible.
+    /// - panics: debug builds panic when a total is smaller than its retained
+    ///   prefix.
+    #[must_use]
+    #[inline]
+    pub fn with_captured_output(
+        command: Vec<String>,
+        cwd: &Utf8Path,
+        stdout: String,
+        stderr: String,
+        stdout_bytes: usize,
+        stderr_bytes: usize,
+        exit_code: Option<i32>,
+    ) -> Self
+    {
+        debug_assert!(
+            stdout_bytes >= stdout.len(),
+            "stdout total must cover the retained prefix"
+        );
+        debug_assert!(
+            stderr_bytes >= stderr.len(),
+            "stderr total must cover the retained prefix"
+        );
+        let mut invocation = Self::with_cwd_path(command, cwd, stdout, stderr, exit_code);
+        if stdout_bytes > invocation.stdout.len() {
+            invocation.stdout_bytes = NonZeroUsize::new(stdout_bytes);
+        }
+        if stderr_bytes > invocation.stderr.len() {
+            invocation.stderr_bytes = NonZeroUsize::new(stderr_bytes);
+        }
+        invocation
+    }
+
+    /// Return the complete observed standard-output byte count.
+    ///
+    /// # Contract
+    /// - ensures: returns the explicit total for truncated batch output and the
+    ///   retained string length otherwise.
+    /// - fails: none.
+    /// - panics: none.
+    #[must_use]
+    #[inline]
+    pub fn total_stdout_bytes(&self) -> usize
+    {
+        self.stdout_bytes
+            .map_or_else(|| self.stdout.len(), NonZeroUsize::get)
+    }
+
+    /// Return the complete observed standard-error byte count.
+    ///
+    /// # Contract
+    /// - ensures: returns the explicit total for truncated batch output and the
+    ///   retained string length otherwise.
+    /// - fails: none.
+    /// - panics: none.
+    #[must_use]
+    #[inline]
+    pub fn total_stderr_bytes(&self) -> usize
+    {
+        self.stderr_bytes
+            .map_or_else(|| self.stderr.len(), NonZeroUsize::get)
     }
 }
 

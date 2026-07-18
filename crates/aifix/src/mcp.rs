@@ -23,6 +23,8 @@ use serde_json::json;
 
 use crate::adapter::parse_diagnostics;
 use crate::batch::AUTO_PROFILE;
+use crate::batch::BatchLimits;
+use crate::batch::DEFAULT_BATCH_STREAM_OUTPUT_LIMIT;
 use crate::batch::available_profile_names;
 use crate::batch::default_protocol_for_profile;
 use crate::batch::is_known_profile;
@@ -30,7 +32,7 @@ use crate::batch::profile_catalog;
 use crate::batch::render_profile_catalog;
 use crate::batch::run_auto_profile;
 use crate::batch::run_configured_profile;
-use crate::batch::run_profile_with_limit;
+use crate::batch::run_profile_with_limits;
 use crate::batch::unknown_profile_message;
 use crate::cache::ReplayMode;
 use crate::cache::diagnostic_cache_path;
@@ -314,6 +316,7 @@ fn batch_schema() -> Value
             "protocol": protocol_schema(),
             "format": format_schema(),
             "maxDiagnostics": { "type": "integer", "minimum": 0 },
+            "maxOutputBytes": { "type": "integer", "minimum": 0, "description": "Maximum bytes accepted from each invoked-tool output stream." },
             "dedupe": { "type": "boolean" },
             "recordMetrics": { "type": "boolean" },
         },
@@ -610,10 +613,21 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         .max_diagnostics
         .or(profile_limit)
         .or(loaded_config.config.max_diagnostics);
+    let profile_output_limit = profile_config.and_then(|config| config.max_output_bytes);
+    let max_output_override = args.max_output_bytes.or(profile_output_limit);
     let mut digest = if profile == AUTO_PROFILE {
-        run_auto_profile(&loaded_config.config, &cwd, max_diagnostics)
+        run_auto_profile(
+            &loaded_config.config,
+            &cwd,
+            max_diagnostics,
+            max_output_override,
+        )
     }
     else {
+        let max_output_bytes = max_output_override
+            .or(loaded_config.config.max_output_bytes)
+            .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
+        let limits = BatchLimits::new(max_diagnostics, max_output_bytes);
         let protocol = parse_optional_protocol(args.protocol.as_deref())?
             .or_else(|| profile_config?.protocol)
             .or_else(|| default_protocol_for_profile(profile))
@@ -626,11 +640,11 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
                 &args.extra_args,
                 protocol,
                 &cwd,
-                max_diagnostics,
+                limits,
             )?
         }
         else {
-            run_profile_with_limit(profile, &args.extra_args, protocol, &cwd, max_diagnostics)?
+            run_profile_with_limits(profile, &args.extra_args, protocol, &cwd, limits)?
         }
     };
     if args.dedupe || args.record_metrics {
@@ -1071,6 +1085,8 @@ struct BatchArgs
     format: Option<String>,
     /// Optional sample cap.
     max_diagnostics: Option<usize>,
+    /// Optional per-stream output byte budget.
+    max_output_bytes: Option<usize>,
     /// Whether to filter already-seen diagnostics.
     #[serde(default)]
     dedupe: bool,
@@ -1162,4 +1178,68 @@ struct GuidanceArgs
     input: Option<String>,
     /// Optional protocol used with raw input.
     protocol: Option<String>,
+}
+
+/// Unit coverage for MCP argument schemas and dispatch.
+#[cfg(test)]
+mod tests
+{
+    use std::fs;
+
+    use super::*;
+
+    /// Verify camel-case MCP arguments reach the batch output budget.
+    #[test]
+    fn batch_tool_honors_max_output_bytes() -> Result<(), AifixError>
+    {
+        let schema = batch_schema();
+        assert_eq!(
+            schema
+                .pointer("/properties/maxOutputBytes/minimum")
+                .and_then(Value::as_u64),
+            Some(0),
+            "batch schema should publish maxOutputBytes"
+        );
+        let cwd = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("aifix-mcp-max-output-bytes-{}", std::process::id())),
+        )
+        .map_err(|path| {
+            AifixError::utf8(format!(
+                "temporary MCP test path was not UTF-8: {}",
+                path.display()
+            ))
+        })?;
+        drop(fs::remove_dir_all(&cwd));
+        fs::create_dir_all(&cwd).map_err(AifixError::io)?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.custom]\n",
+                "argv = [\"printf\"]\n",
+                "protocol = \"nushell-text\"\n",
+            ),
+        )
+        .map_err(AifixError::io)?;
+        let result = run_batch_tool(json!({
+            "profile": "custom",
+            "extraArgs": ["12345"],
+            "cwd": cwd.as_str(),
+            "maxOutputBytes": 4_u64
+        }));
+        fs::remove_dir_all(&cwd).map_err(AifixError::io)?;
+
+        let error = match result {
+            | Ok(_) => {
+                return Err(AifixError::process(
+                    "MCP batch unexpectedly ignored maxOutputBytes",
+                ));
+            },
+            | Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("capture limit of 4 bytes"),
+            "MCP batch should apply camel-case output budget: {error}"
+        );
+        Ok(())
+    }
 }
