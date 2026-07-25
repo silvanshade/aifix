@@ -368,7 +368,7 @@ Profile discovery reports native-fix capability.
 
 A native fix runs once before the ordinary diagnostic command.
 Successful fix commands may emit non-diagnostic output.
-A nonzero fix exit is tolerated only when its bounded output parses as diagnostics under the profile's optional fix protocol or its diagnostic protocol by default, because fixable and unfixable findings may coexist; unparsable nonzero output is an operational failure.
+A nonzero fix exit is tolerated only when the effective fix-output protocol—`fix_protocol` when configured, otherwise the diagnostic protocol—is explicit, non-automatic, and parses at least one diagnostic, because automatic generic-text fallback could misclassify an operational error; other nonzero output is an operational failure.
 The returned digest is built only from the subsequent diagnostic pass.
 
 For a named profile, requesting a missing native fix command is an explicit argument error with configuration recovery.
@@ -378,6 +378,6 @@ For `auto`, fixable detected profiles run their native fix phase while profiles 
 
 * Agents can request one mutating batch operation and receive only residual diagnostics.
 * Profile configuration is flexible enough for other native fix tools through complete direct argv and an optional fix-output protocol, without exposing arbitrary shell commands.
-* Rust fixes opt into dirty working trees but retain Cargo's staged-change and missing-VCS safeguards.
+* Rust `--allow-dirty` fixes intentionally permit unstaged and staged changes; Cargo's missing-VCS safeguard remains active.
 * Native fix output uses the existing bounded capture and UTF-8 contracts.
 * LSP code actions remain a separate capability because their lifecycle and safety policy are not expressible as one profile argv.
