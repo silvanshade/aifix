@@ -1,8 +1,8 @@
 # aifix
 
 `aifix` is an agent-first Rust adapter for turning noisy tool diagnostics into a small, structured digest that an LLM coding agent can act on.
-CLI digest modes do not apply fixes.
-The MCP surface can replay explicitly recorded project-local patches when an agent requests that rerere-style behavior.
+Pipeline mode and ordinary batch runs do not apply fixes.
+Batch native-fix mode and MCP cached replay apply mode mutate source only when explicitly requested.
 It normalizes diagnostics, deduplicates exact semantic repeats, groups related issues, preserves tool invocation metadata, and renders the result for agent handoff.
 
 The project name is tentative.
@@ -29,7 +29,8 @@ Batch mode runs `auto`, a built-in profile, or a configured profile directly, ca
 ```sh
 aifix batch --format compact-json
 aifix batch auto --format markdown
-aifix batch rust --format compact-json -- --all-targets
+aifix batch rust --format compact-json -- -W clippy::pedantic
+aifix batch rust --fix --format compact-json
 aifix batch agda --protocol agda-text -- -i src src/Main.agda
 aifix batch custom --protocol nushell-text -- nu-lint scripts/check.nu
 ```
@@ -40,10 +41,14 @@ An operational failure in one detected profile is reported for that profile with
 Built-in profiles target Rust, TypeScript, Agda, and Nushell.
 Custom profiles require an explicit command argv.
 Commands are executed without a shell.
-Extra arguments after `--` are profile-specific, must be valid UTF-8, and are rejected by `auto`.
+Extra arguments after `--` are profile-specific, must be valid UTF-8, and append to named diagnostic commands plus built-in fallback fix commands; explicit configured `fix_argv` is complete and independent, and `auto` rejects extra arguments.
 Each stream retains at most 1 MiB in invocation metadata; larger output spills to private temporary storage for complete parsing, with a configurable 1 GiB default per-stream processing budget.
 Override the budget with `--max-output-bytes`, root or profile `max_output_bytes` config, or MCP `maxOutputBytes`.
 A nonzero tool exit can still produce a digest when diagnostics are parseable; unparsable nonzero output remains an `aifix` process error.
+`--fix` runs a profile-declared native fix command once, then reruns the ordinary diagnostic command and renders only diagnostics that remain.
+The built-in Rust profile uses `cargo clippy --fix --allow-dirty`, intentionally permitting unstaged and staged changes while retaining Cargo's missing-VCS safeguard.
+Configured profiles can provide direct-argv `fix_argv`.
+Named profiles without a fix command fail explicitly; `auto --fix` fixes supported profiles and runs unsupported profiles diagnostically.
 
 ### MCP mode
 
@@ -56,6 +61,7 @@ aifix mcp
 The server advertises tools for pipeline and batch digests, batch profile discovery, diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance; its initialize response also includes concise agent tool guidance.
 `aifix_batch_profiles` lists `auto`, built-ins, `custom`, and configured profiles with detection metadata.
 `aifix_batch` accepts an omitted or empty `profile` as `auto`, and unknown profiles return structured recovery data for choosing a valid profile.
+Set MCP `aifix_batch` argument `fix` to `true` only when the caller intends to mutate the workspace before receiving residual diagnostics.
 Project-local cache state is stored in `.aifix/diagnostics.json`.
 Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
 
@@ -66,6 +72,7 @@ Cached fix replay feeds stored patches to `git apply` through direct argv and st
 * Prefer `aifix_batch` with omitted, empty, or `auto` profile for project-wide diagnostics.
 * Use a named batch profile when the run is intentionally profile-specific.
 * Pass batch extra arguments only to named profiles; `auto` rejects them because they are profile-specific.
+* Set batch `fix` to `true` only for an explicit mutating run; the result contains diagnostics from the post-fix pass.
 * Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
 * Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
 * `aifix` normalizes diagnostics and does not invent fixes.
@@ -120,6 +127,6 @@ By default, user configuration uses the same XDG-style path policy on every plat
 If neither variable is available, there is no user config path.
 Set `AIFIX_CONFIG_DIR_MODE=platform-native` or `AIFIX_CONFIG_DIR_MODE=native` to opt in to platform-native user config directories.
 Any other `AIFIX_CONFIG_DIR_MODE` value is a configuration error.
-Config may set the default protocol, output format, maximum diagnostics, per-stream output-byte budget, and named profile commands.
-Configured profiles appear in `config profiles` and MCP `aifix_batch_profiles` output alongside `auto`, built-ins, and `custom`.
+Config may set the default protocol, output format, maximum diagnostics, per-stream output-byte budget, named profile diagnostic `argv`, optional native-fix `fix_argv`, and an optional `fix_protocol`; nonzero fix output is accepted only when the effective protocol is non-automatic and parses at least one diagnostic.
+Configured profiles appear in `config profiles` and MCP `aifix_batch_profiles` output alongside `auto`, built-ins, and `custom`; discovery metadata reports native-fix support.
 Existing non-file `aifix.toml` candidates are rejected so broken project state is visible.

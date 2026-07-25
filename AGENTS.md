@@ -4,7 +4,7 @@ Compact aifix project delta for coding agents — keep shared doctrine in the co
 
 `aifix` is a Rust workspace for an agent-first diagnostic adapter.
 The CLI turns noisy compiler, linter, LSP, and text diagnostics into a normalized digest that coding agents can consume.
-It does not apply fixes.
+Mutation is restricted to explicit modes; ordinary pipeline and batch runs do not apply fixes.
 The project name is still tentative until publication; keep the collision caveat in public docs.
 
 ## Shared core
@@ -25,11 +25,13 @@ Project parameters live in `.agents/conventions.toml` (`project = "aifix"`, Rust
 
 * **Orientation**: adapters parse diagnostics, the model normalizes, digest groups and deduplicates, renderers render, and the CLI dispatches.
   Keep the crate boring and explicit.
-* **Diagnostic contract**: `aifix` reports normalized diagnostics; it never invents fixes or applies changes.
+* **Diagnostic contract**: `aifix` reports normalized diagnostics and never invents fixes.
+  It applies changes only through explicit mutating modes accepted in the ADR; ordinary runs remain diagnostic-only.
   Treat nonzero tool exits with parseable diagnostics as diagnostic results, not automatic `aifix` failures.
 * **CLI boundary handling**: malformed structured auto input must not fall back to generic text; non-UTF-8 batch extra args must fail; batch capture stays bounded.
 * **Batch execution**: preserve direct argv process execution in batch mode.
   Never route tool commands through a shell.
+  A nonzero native-fix exit requires at least one diagnostic parsed by an explicit non-automatic protocol; signal termination is always an operational failure.
 * **Rust panic policy**: production paths return typed errors.
   Panics are unacceptable except for debug assertions of internal invariants or test-only failures.
 * **Rust contracts**: public and private nontrivial Rust items should carry useful rustdoc explaining contract, failure modes, and panic behavior.

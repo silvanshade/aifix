@@ -4,11 +4,11 @@
 
 [[files]]
 path = "README.md"
-b3 = "4b69526ecfc2ff18513b260e9169c0694c9d05bb5871eaef472f62da7a13c966"
+b3 = "d91ce4c83a98ed81cbcd73e7b052e399491acd2400dd14f6297b533c65b19934"
 
 [[files]]
 path = "ARCHITECTURE.md"
-b3 = "41495621f5c7a3bff6ce527abb9c881ff9f07c86fb93c662f6a8b45c97e22c0e"
+b3 = "ec1c01485d0688ca5456e2fc2afdf50d9e22560c2e6d88d393f6eac87a345a4d"
 
 [[files]]
 path = "CONTRIBUTING.md"
@@ -28,7 +28,7 @@ b3 = "708a6190693d42e5545bc936fff4f35ddea340ebce627588369b29821ec1b451"
 
 [[files]]
 path = "AGENTS.md"
-b3 = "d56f3cea5ba4f3fa26059e6dbce19b25769dbc8254d7e95ce96841263c1cba76"
+b3 = "2c93722a91cdae78f71e7e648df613a4026ff076585bdb00fd631f334eb93695"
 
 [[files]]
 path = ".omp/skills/find-best-rust-crates/SKILL.md"

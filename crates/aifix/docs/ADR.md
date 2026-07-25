@@ -116,6 +116,21 @@ Consequences:
 * Supported shells are defined by clap-complete.
 * No generated completion artifacts are committed by the crate-local docs.
 
+### Run explicit native fixes before residual diagnostics
+
+Decision: opt-in batch native-fix mode runs a profile-owned direct argv once, then builds the returned digest from a fresh diagnostic invocation.
+
+Rationale: tool-native fixers know which suggestions are machine-applicable.
+Keeping fix argv in the profile avoids generic flag injection while a post-fix diagnostic pass gives agents the residual findings they need.
+
+Consequences:
+
+* The Rust built-in uses `cargo clippy --fix --allow-dirty`.
+* Configured profiles may provide a complete `fix_argv` independent of diagnostic extra args.
+* Configured profiles may override the protocol used to classify nonzero fix output; the effective protocol must be non-automatic and parse at least one diagnostic.
+* Named unsupported profiles fail; automatic runs continue diagnostically for unsupported profiles.
+* Native-fix output uses the same bounded process capture and UTF-8 contracts.
+
 ## designed direction
 
 ### Treat batch execution as diagnostic capture
@@ -130,17 +145,17 @@ Consequences:
 * Renderers should not discard invocation metadata.
 * Unparsable nonzero output should remain an operational failure.
 
-### Keep fix capability explicit
+### Keep diagnostic suggestions explicit
 
-Decision: suggestions and fixes should be represented only when an input adapter observes them; the crate should not invent edits.
+Decision: suggestions should be represented only when an input adapter observes them; the crate should not invent edits from normalized diagnostic text.
 
 Rationale: diagnostic formats differ in whether suggestions are precise, machine-applicable, or only explanatory.
-Invented fixes are unsafe for an agent-first adapter.
+Native-fix mode delegates applicability to the owning tool rather than applying parsed suggestions itself.
 
 Consequences:
 
 * The digest can guide an agent toward likely next files and codes.
-* Applying edits remains outside this crate until a separate accepted decision defines safety rules.
+* Applying parsed suggestions remains outside the crate until a separate accepted decision defines safety rules.
 
 ## open decision
 

@@ -23,7 +23,21 @@ argv = [
   "--cap-lints",
   "warn",
 ]
+fix_argv = [
+  "cargo",
+  "clippy",
+  "--fix",
+  "--allow-dirty",
+  "--quiet",
+  "--message-format=json",
+  "--all-targets",
+  "--all-features",
+  "--",
+  "--cap-lints",
+  "warn",
+]
 protocol = "clippy-json"
+fix_protocol = "clippy-json"
 
 [profiles.typescript]
 argv = ["tsc", "--noEmit", "--pretty", "false"]

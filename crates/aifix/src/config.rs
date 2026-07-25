@@ -78,10 +78,21 @@ pub struct ProfileConfig
 {
     /// Executable and arguments used for this profile.
     #[serde(default, alias = "command")]
-    pub argv: Vec<String>,
+    pub argv: Option<Vec<String>>,
+    /// Executable and arguments used for an opt-in native automatic-fix pass.
+    ///
+    /// Empty values fall back to a built-in fix command when the named profile
+    /// provides one.
+    #[serde(default, alias = "fix-command")]
+    pub fix_argv: Option<Vec<String>>,
     /// Protocol used to parse this profile's output when not specified on CLI.
     #[serde(default)]
     pub protocol: Option<Protocol>,
+    /// Protocol used to classify a nonzero native-fix result.
+    ///
+    /// Defaults to the profile's diagnostic protocol.
+    #[serde(default)]
+    pub fix_protocol: Option<Protocol>,
     /// Renderer used for this profile when not specified on CLI.
     #[serde(default)]
     pub format: Option<OutputFormat>,
@@ -93,7 +104,7 @@ pub struct ProfileConfig
     pub max_output_bytes: Option<usize>,
     /// Whether this configured profile participates in `batch auto`.
     #[serde(default)]
-    pub auto: bool,
+    pub auto: Option<bool>,
 }
 
 /// Configuration plus the paths that contributed to it.
@@ -180,9 +191,9 @@ impl Config
     /// # Contract
     /// - requires: profile names in `other` are already decoded as valid UTF-8
     ///   map keys.
-    /// - ensures: every non-empty setting in `other` replaces this config's
-    ///   matching setting; existing profile fields are merged rather than
-    ///   dropped.
+    /// - ensures: every explicitly present setting in `other` replaces this
+    ///   config's matching setting, including empty argv and `false`; existing
+    ///   profile fields are merged rather than dropped.
     /// - fails: none.
     /// - panics: none.
     fn merge(
@@ -219,27 +230,29 @@ impl ProfileConfig
     /// values.
     ///
     /// # Contract
-    /// - requires: `other.argv`, when non-empty, starts with the executable the
-    ///   caller wants to run.
+    /// - requires: a present, non-empty `other.argv` starts with the executable
+    ///   the caller wants to run.
     /// - ensures: explicit profile fields in `other` replace this profile's
-    ///   corresponding fields; omitted fields keep their current values.
+    ///   corresponding fields, including empty argv and `false`; omitted fields
+    ///   keep their current values.
     /// - fails: none.
-    /// - panics: debug builds may panic if a non-empty incoming argv becomes
-    ///   empty after assignment.
+    /// - panics: none.
     fn merge(
         &mut self,
         other: Self,
     )
     {
-        if !other.argv.is_empty() {
+        if other.argv.is_some() {
             self.argv = other.argv;
-            debug_assert!(
-                !self.argv.is_empty(),
-                "non-empty profile argv must remain non-empty after merge"
-            );
+        }
+        if other.fix_argv.is_some() {
+            self.fix_argv = other.fix_argv;
         }
         if other.protocol.is_some() {
             self.protocol = other.protocol;
+        }
+        if other.fix_protocol.is_some() {
+            self.fix_protocol = other.fix_protocol;
         }
         if other.format.is_some() {
             self.format = other.format;
@@ -250,8 +263,8 @@ impl ProfileConfig
         if other.max_output_bytes.is_some() {
             self.max_output_bytes = other.max_output_bytes;
         }
-        if other.auto {
-            self.auto = true;
+        if other.auto.is_some() {
+            self.auto = other.auto;
         }
     }
 }

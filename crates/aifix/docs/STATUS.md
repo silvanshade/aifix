@@ -3,17 +3,18 @@
 ## current
 
 `aifix` is the Rust CLI crate for turning tool diagnostics into an agent-friendly digest.
-The crate contains package metadata, protocol adapters, the normalized model, direct batch execution, config discovery, digest construction, typed errors, deterministic local explanation metadata, rendering, the CLI entry point, integration coverage, unit coverage in core modules, a Criterion ingestion benchmark hook, and a cargo-fuzz ingestion target.
+The crate contains package metadata, protocol adapters, the normalized model, direct diagnostic and native-fix batch execution, config discovery, digest construction, typed errors, deterministic local explanation metadata, rendering, the CLI entry point, integration coverage, unit coverage in core modules, a Criterion ingestion benchmark hook, and a cargo-fuzz ingestion target.
 
 * Crate: `aifix` at `crates/aifix`, with library and binary both named `aifix`.
 * Edition: Rust 2024 through the workspace and fuzz package manifest.
 * Publishing: disabled through workspace package metadata.
 * Runtime dependencies: workspace `camino`, `clap`, `clap_complete`, `directories`, `serde`, `serde_json`, `thiserror`, and `toml`.
 * Dev dependency: workspace `criterion` for the `ingest` bench target.
-* Current source files under `src/`: `adapter.rs`, `batch.rs`, `config.rs`, `digest.rs`, `error.rs`, `explain.rs`, `lib.rs`, `main.rs`, `model.rs`, and `render.rs`.
-* Public modules in `lib.rs`: `adapter`, `batch`, `config`, `digest`, `error`, `explain`, `model`, and `render`.
-* CLI commands: `pipeline`, `batch`, `explain`, `config paths`, and `completions <shell>`.
+* Current source files under `src/`: `adapter.rs`, `batch.rs`, `cache.rs`, `config.rs`, `digest.rs`, `error.rs`, `explain.rs`, `lib.rs`, `main.rs`, `mcp.rs`, `model.rs`, `render.rs`, `signature.rs`, and `syntax.rs`.
+* Public modules in `lib.rs`: `adapter`, `batch`, `cache`, `config`, `digest`, `error`, `explain`, `mcp`, `model`, `render`, `signature`, and `syntax`.
+* CLI commands: `pipeline`, `batch`, `explain`, `config paths`, `config profiles`, `mcp`, and `completions <shell>`.
 * CLI diagnostic gate options: `pipeline` and `batch` support `--fail-on-diagnostics` with repeated `--expected-code <CODE>` allow-list entries; the command renders the digest first and fails only when diagnostics outside the allow-list remain.
+* CLI native-fix option: `batch --fix` runs a profile-owned native fix command before a fresh residual diagnostic pass; the Rust built-in uses `cargo clippy --fix --allow-dirty`, and configured profiles may select a distinct nonzero-output protocol.
 * Current integration tests: `crates/aifix/tests/pipeline_cli.rs`.
 * Current fixtures: `crates/aifix/tests/fixtures/clippy.jsonl` and `crates/aifix/tests/fixtures/agda.txt`.
 * Current benchmark hook: `crates/aifix/benches/ingest.rs`, registering `clippy fixture parse and digest`.
@@ -31,6 +32,7 @@ Current integration tests in `pipeline_cli.rs` cover:
 * bounded rejection at an explicit per-stream processing budget;
 * CLI, selected-profile, auto-profile, and root output-budget precedence;
 * MCP `maxOutputBytes` schema and dispatch;
+* native-fix capability discovery, explicit unsupported-profile errors, configured `fix_argv`, and MCP post-fix residual diagnostics;
 * incremental UTF-8 boundary acceptance and malformed-byte rejection;
 * strict rejection of non-UTF-8 batch extra args;
 * rejection of non-file project `aifix.toml` candidates.
@@ -49,13 +51,12 @@ Review hardening currently implemented:
 
 ## designed direction
 
-The crate should stay a small diagnostic adapter, not a replacement for the underlying tools.
-It should normalize tool output, preserve invocation metadata, group related diagnostics, and render the same digest shape for pipeline and batch modes.
+The crate should stay a small diagnostic and tool-orchestration adapter, not a replacement for the underlying tools.
+It should normalize tool output, preserve invocation metadata, run only explicit profile-owned native fixes, group related diagnostics, and render the same digest shape for pipeline and batch modes.
 
 Out of scope for this crate:
 
 * network lookups while explaining diagnostic codes;
-* applying fixes directly to source files;
 * hiding nonzero tool exits when diagnostics are still parseable;
 * project-specific Agda source-policy sweeps, including multi-root orchestration or `--without-K` checks for a particular repository.
 * maintaining compatibility aliases for old CLI or data-model names.

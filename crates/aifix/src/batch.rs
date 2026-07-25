@@ -63,6 +63,21 @@ const RUST_COMMAND: &[&str] = &[
     "warn",
 ];
 
+/// Built-in Rust profile native automatic-fix command.
+const RUST_FIX_COMMAND: &[&str] = &[
+    RUST_COMMAND_FAMILY,
+    "clippy",
+    "--fix",
+    "--allow-dirty",
+    "--quiet",
+    "--message-format=json",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "--cap-lints",
+    "warn",
+];
+
 /// Built-in TypeScript profile command.
 const TYPESCRIPT_COMMAND: &[&str] = &[TYPESCRIPT_COMMAND_FAMILY, "--noEmit", "--pretty", "false"];
 
@@ -107,6 +122,9 @@ pub struct BatchProfileInfo
     pub defaultable: bool,
     /// Whether the profile accepts extra argv after `--`.
     pub extra_args: bool,
+    /// Executable family for the native automatic-fix command, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_fix_command_family: Option<String>,
     /// Whether the profile appears applicable to the supplied working
     /// directory.
     pub detected: bool,
@@ -282,11 +300,76 @@ pub fn run_auto_profile(
     max_output_override: Option<usize>,
 ) -> Digest
 {
-    let catalog = profile_catalog(config, cwd);
+    run_auto_profile_mode(config, cwd, max_diagnostics, max_output_override, false)
+}
+
+/// Run native automatic fixes for every fixable detected profile, then
+/// aggregate the diagnostics that remain.
+///
+/// Profiles without a native fix command still run diagnostically. Per-profile
+/// operational failures remain isolated in `profile_statuses`.
+///
+/// # Contract
+/// - requires: `config` is merged and `cwd` is the direct execution directory.
+/// - ensures: completes every detected native fix phase before any diagnostic
+///   phase and returns only diagnostics from the resulting workspace.
+/// - fails: none for per-profile operational failures; those are recorded in
+///   the returned digest status metadata.
+/// - panics: none.
+#[must_use]
+#[inline]
+pub fn run_auto_profile_with_native_fix(
+    config: &Config,
+    cwd: &Utf8Path,
+    max_diagnostics: Option<usize>,
+    max_output_override: Option<usize>,
+) -> Digest
+{
+    run_auto_profile_mode(config, cwd, max_diagnostics, max_output_override, true)
+}
+
+/// Shared auto-profile orchestration for diagnostic-only and native-fix runs.
+fn run_auto_profile_mode(
+    config: &Config,
+    cwd: &Utf8Path,
+    max_diagnostics: Option<usize>,
+    max_output_override: Option<usize>,
+    native_fix: bool,
+) -> Digest
+{
+    let profiles = profile_catalog(config, cwd)
+        .into_iter()
+        .filter(|profile| profile.defaultable)
+        .collect::<Vec<_>>();
+    let mut phase_failures = Vec::with_capacity(profiles.len());
     let mut statuses = Vec::new();
     let mut diagnostics = Vec::new();
 
-    for profile in catalog.into_iter().filter(|profile| profile.defaultable) {
+    for profile in &profiles {
+        let preflight_failure = if native_fix && profile.detected {
+            run_auto_selected_preflight(config, profile)
+                .err()
+                .map(|error| (classify_error(&error).to_owned(), error.to_string()))
+        }
+        else {
+            None
+        };
+        phase_failures.push(preflight_failure);
+    }
+    for (profile, phase_failure) in profiles.iter().zip(&mut phase_failures) {
+        if native_fix
+            && profile.detected
+            && profile.native_fix_command_family.is_some()
+            && phase_failure.is_none()
+        {
+            *phase_failure =
+                run_auto_selected_native_fix(config, profile, cwd, max_output_override)
+                    .err()
+                    .map(|error| (classify_error(&error).to_owned(), error.to_string()));
+        }
+    }
+
+    for (profile, fix_failure) in profiles.into_iter().zip(phase_failures) {
         if !profile.detected {
             statuses.push(ProfileRunStatus {
                 profile: profile.name,
@@ -301,8 +384,30 @@ pub fn run_auto_profile(
             continue;
         }
 
-        let result = run_auto_selected_profile(config, &profile, cwd, max_output_override);
-        match result {
+        let reason = if native_fix && profile.native_fix_command_family.is_none() {
+            format!(
+                "{}; no native fix command, diagnostics only",
+                profile.detection_reason
+            )
+        }
+        else {
+            profile.detection_reason.clone()
+        };
+        if let Some((error_kind, error)) = fix_failure {
+            statuses.push(ProfileRunStatus {
+                profile: profile.name,
+                state: ProfileRunState::Failed,
+                protocol: profile.protocol,
+                command_family: profile.command_family,
+                diagnostic_count: None,
+                error_kind: Some(error_kind),
+                error: Some(error),
+                reason: Some(reason),
+            });
+            continue;
+        }
+
+        match run_auto_selected_profile(config, &profile, cwd, max_output_override) {
             | Ok(digest) => {
                 let diagnostic_count = digest.counts.total;
                 diagnostics.extend(digest.diagnostics);
@@ -314,7 +419,7 @@ pub fn run_auto_profile(
                     diagnostic_count: Some(diagnostic_count),
                     error_kind: None,
                     error: None,
-                    reason: Some(profile.detection_reason),
+                    reason: Some(reason),
                 });
             },
             | Err(error) => {
@@ -326,23 +431,21 @@ pub fn run_auto_profile(
                     diagnostic_count: None,
                     error_kind: Some(classify_error(&error).to_owned()),
                     error: Some(error.to_string()),
-                    reason: Some(profile.detection_reason),
+                    reason: Some(reason),
                 });
             },
         }
     }
 
-    let invocation = Invocation::with_cwd_path(
-        vec![
-            "aifix".to_owned(),
-            "batch".to_owned(),
-            AUTO_PROFILE.to_owned(),
-        ],
-        cwd,
-        String::new(),
-        String::new(),
-        None,
-    );
+    let mut command = vec![
+        "aifix".to_owned(),
+        "batch".to_owned(),
+        AUTO_PROFILE.to_owned(),
+    ];
+    if native_fix {
+        command.push("--fix".to_owned());
+    }
+    let invocation = Invocation::with_cwd_path(command, cwd, String::new(), String::new(), None);
     let mut digest = build_digest(diagnostics, invocation, max_diagnostics);
     digest.profile_statuses = statuses;
     digest
@@ -456,8 +559,63 @@ pub fn run_profile_with_limits(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
+    run_profile_mode(profile, extra_args, protocol, cwd, limits, false)
+}
+
+/// Run a built-in profile's native automatic fix command, then return only the
+/// diagnostics that remain.
+///
+/// # Contract
+/// - requires: `profile` names a built-in profile with a native fix command.
+/// - ensures: executes the native fix argv and then the ordinary diagnostic
+///   argv with the same `extra_args`, protocol, cwd, and resource limits.
+/// - fails: returns invalid argument when no native fix command exists, or
+///   process, UTF-8, output-limit, or parser errors from either invocation.
+/// - panics: none.
+///
+/// # Errors
+/// Returns an error when the profile has no native fix command or either direct
+/// argv invocation fails operationally.
+#[inline]
+pub fn run_profile_with_native_fix(
+    profile: &str,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+) -> Result<Digest, AifixError>
+{
+    run_profile_mode(profile, extra_args, protocol, cwd, limits, true)
+}
+
+/// Execute one built-in profile in diagnostic-only or native-fix mode.
+fn run_profile_mode(
+    profile: &str,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+    native_fix: bool,
+) -> Result<Digest, AifixError>
+{
     let argv = profile_command(profile, extra_args)?;
+    if native_fix {
+        run_profile_native_fix(profile, extra_args, protocol, cwd, limits)?;
+    }
     run_argv(argv, protocol, cwd, limits)
+}
+
+/// Execute only one built-in profile's native fix phase.
+fn run_profile_native_fix(
+    profile: &str,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+) -> Result<(), AifixError>
+{
+    let fix_argv = profile_native_fix_command(profile, extra_args)?;
+    run_native_fix_argv(&fix_argv, protocol, cwd, limits)
 }
 
 /// Run an explicitly configured profile and cap digest samples per group.
@@ -469,10 +627,8 @@ pub fn run_profile_with_limits(
 ///   most [`BATCH_STREAM_RETENTION_LIMIT`] bytes per stream in memory, and
 ///   applies `limits` to output processing and digest samples.
 /// - fails: returns invalid argument, process, UTF-8, or parser errors.
-/// - panics: debug builds may panic if resolved configured argv is unexpectedly
-///   empty before execution.
+/// - panics: none.
 ///
-/// # Errors
 /// # Errors
 /// Returns an error when profile resolution fails, process execution or bounded
 /// capture fails, captured streams are not UTF-8, or diagnostic parsing fails.
@@ -486,18 +642,112 @@ pub fn run_configured_profile(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
-    let mut argv = if config.argv.is_empty() {
-        profile_command(name, &[])?
+    run_configured_profile_mode(name, config, extra_args, protocol, cwd, limits, false)
+}
+
+/// Run a configured profile's native automatic fix command, then return only
+/// the diagnostics that remain.
+///
+/// An empty `fix_argv` falls back to a built-in native fix command for `name`.
+///
+/// # Contract
+/// - requires: configured and fallback argv values start with an executable.
+/// - ensures: executes the resolved fix argv before the configured diagnostic
+///   argv; `extra_args` extend the built-in fallback fix command but an
+///   explicit `fix_argv` remains complete and independent.
+/// - fails: returns invalid argument when no fix argv exists, or process,
+///   UTF-8, output-limit, or parser errors from either invocation.
+/// - panics: none.
+///
+/// # Errors
+/// Returns an error when fix or diagnostic command resolution or execution
+/// fails.
+#[inline]
+pub fn run_configured_profile_with_native_fix(
+    name: &str,
+    config: &ProfileConfig,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+) -> Result<Digest, AifixError>
+{
+    run_configured_profile_mode(name, config, extra_args, protocol, cwd, limits, true)
+}
+
+/// Execute one configured profile in diagnostic-only or native-fix mode.
+fn run_configured_profile_mode(
+    name: &str,
+    config: &ProfileConfig,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+    native_fix: bool,
+) -> Result<Digest, AifixError>
+{
+    let argv = configured_profile_command(name, config, extra_args)?;
+    if native_fix {
+        run_configured_native_fix(name, config, extra_args, protocol, cwd, limits)?;
+    }
+    run_argv(argv, protocol, cwd, limits)
+}
+
+/// Resolve and validate one configured profile's diagnostic argv.
+fn configured_profile_command(
+    name: &str,
+    config: &ProfileConfig,
+    extra_args: &[String],
+) -> Result<Vec<String>, AifixError>
+{
+    if let Some(argv) = config.argv.as_ref().filter(|argv| !argv.is_empty()) {
+        if argv.first().is_none_or(String::is_empty) {
+            return Err(AifixError::invalid_argument(
+                "configured profile diagnostic executable must not be empty",
+            ));
+        }
+        let mut command = argv.clone();
+        command.extend(extra_args.iter().cloned());
+        return Ok(command);
+    }
+    if matches!(
+        name,
+        RUST_PROFILE
+            | TYPESCRIPT_PROFILE
+            | "ts"
+            | AGDA_PROFILE
+            | NUSHELL_PROFILE
+            | "nu"
+            | CUSTOM_PROFILE
+    ) {
+        profile_command(name, extra_args)
     }
     else {
-        config.argv.clone()
+        Err(AifixError::invalid_argument(format!(
+            "configured profile `{name}` requires a nonempty diagnostic `argv`"
+        )))
+    }
+}
+
+/// Execute only one configured profile's native fix phase.
+fn run_configured_native_fix(
+    name: &str,
+    config: &ProfileConfig,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+) -> Result<(), AifixError>
+{
+    let fix_argv = if let Some(fix_argv) = config.fix_argv.as_ref().filter(|argv| !argv.is_empty())
+    {
+        fix_argv.clone()
+    }
+    else {
+        profile_native_fix_command(name, extra_args)?
     };
-    argv.extend(extra_args.iter().cloned());
-    debug_assert!(
-        !argv.is_empty(),
-        "configured profile argv must include an executable before execution"
-    );
-    run_argv(argv, protocol, cwd, limits)
+    let fix_protocol = config.fix_protocol.unwrap_or(protocol);
+    run_native_fix_argv(&fix_argv, fix_protocol, cwd, limits)
 }
 
 /// Return the command argv for a built-in profile.
@@ -513,9 +763,8 @@ pub fn run_configured_profile(
 ///   to an empty argv vector.
 ///
 /// # Errors
-/// # Errors
 /// Returns an error when `profile` is unknown or when `custom` receives no
-/// executable in `extra_args`.
+/// nonempty executable in `extra_args`.
 #[inline]
 pub fn profile_command(
     profile: &str,
@@ -528,9 +777,9 @@ pub fn profile_command(
         | "agda" => strings(AGDA_COMMAND),
         | "nushell" | "nu" => strings(NUSHELL_COMMAND),
         | "custom" => {
-            if extra_args.is_empty() {
+            if extra_args.first().is_none_or(String::is_empty) {
                 return Err(AifixError::invalid_argument(
-                    "custom profile requires an explicit command after --",
+                    "custom profile requires a nonempty executable after --",
                 ));
             }
             return Ok(extra_args.to_vec());
@@ -550,22 +799,41 @@ pub fn profile_command(
     Ok(argv)
 }
 
+/// Return the native automatic-fix argv for a built-in profile.
+fn profile_native_fix_command(
+    profile: &str,
+    extra_args: &[String],
+) -> Result<Vec<String>, AifixError>
+{
+    let mut argv = match profile {
+        | RUST_PROFILE => strings(RUST_FIX_COMMAND),
+        | other => {
+            return Err(AifixError::invalid_argument(format!(
+                "profile `{other}` has no native fix command; configure `profiles.{other}.fix_argv`"
+            )));
+        },
+    };
+    argv.extend(extra_args.iter().cloned());
+    debug_assert!(
+        !argv.is_empty(),
+        "built-in native fix argv must include an executable"
+    );
+    Ok(argv)
+}
+
 /// Execute one argv vector and incrementally parse bounded captured output.
 ///
 /// # Contract
-/// - requires: `command` contains an executable at index zero and any following
-///   arguments are already split into argv form.
+/// - requires: following arguments are already split into argv form.
 /// - ensures: preserves bounded stdout and stderr prefixes separately in the
 ///   invocation, spills larger streams, parses complete output without loading
 ///   it into one string, and applies `limits` to output bytes and digest
 ///   samples.
-/// - fails: returns invalid argument for an empty command, process errors for
-///   spawn, pipe, wait, join, spill, output-limit, or unparsable non-zero
-///   output, UTF-8 errors for non-UTF-8 streams, or parser errors for parse
-///   failures.
-/// - panics: debug builds may panic if the executable string is empty; command
-///   splitting itself uses `split_first` and returns an error for empty
-///   commands.
+/// - fails: returns invalid argument for a missing or empty executable, process
+///   errors for spawn, pipe, wait, join, spill, output-limit, or unparsable
+///   non-zero output, UTF-8 errors for non-UTF-8 streams, or parser errors for
+///   parse failures.
+/// - panics: none.
 ///
 /// # Errors
 /// Returns an error when `command` is empty, process execution or bounded
@@ -583,10 +851,11 @@ fn run_argv(
             "batch command must include an executable",
         ));
     };
-    debug_assert!(
-        !executable.is_empty(),
-        "batch executable should not be empty"
-    );
+    if executable.is_empty() {
+        return Err(AifixError::invalid_argument(
+            "batch command executable must not be empty",
+        ));
+    }
     let capture = run_child_captured(executable, arguments, cwd, limits.max_output_bytes)?;
     let CapturedOutput {
         status,
@@ -622,6 +891,71 @@ fn run_argv(
         ))),
         | Err(error) => Err(error),
     }
+}
+
+/// Execute a native fix argv and accept nonzero exits only when an explicit
+/// non-automatic protocol parses diagnostics for the subsequent pass.
+fn run_native_fix_argv(
+    command: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+) -> Result<(), AifixError>
+{
+    let Some((executable, arguments)) = command.split_first()
+    else {
+        return Err(AifixError::invalid_argument(
+            "native fix command must include an executable",
+        ));
+    };
+    if executable.is_empty() {
+        return Err(AifixError::invalid_argument(
+            "native fix command executable must not be empty",
+        ));
+    }
+    let capture = run_child_captured(executable, arguments, cwd, limits.max_output_bytes)?;
+    let CapturedOutput {
+        status,
+        stdout,
+        stderr,
+    } = capture;
+    stdout.validate_utf8("stdout", executable)?;
+    stderr.validate_utf8("stderr", executable)?;
+    if status.success() {
+        return Ok(());
+    }
+    if status.code().is_none() {
+        return Err(AifixError::process(
+            "native fix command terminated by signal; partial mutations may remain",
+        ));
+    }
+    let parse_failure = if matches!(protocol, Protocol::Auto) {
+        "automatic protocol is too permissive for nonzero fix output; configure an explicit non-auto `fix_protocol`".to_owned()
+    }
+    else {
+        match parse_captured_output(protocol, &stdout, &stderr) {
+            | Ok(diagnostics) if !diagnostics.is_empty() => return Ok(()),
+            | Ok(_) => "output contained no diagnostics".to_owned(),
+            | Err(error) => format!("output was not parseable: {error}"),
+        }
+    };
+    let (stream, retained) = if stderr.is_empty() {
+        ("stdout", stdout.into_retained_string("stdout", executable)?)
+    }
+    else {
+        ("stderr", stderr.into_retained_string("stderr", executable)?)
+    };
+    let retained = retained.trim();
+    let detail = if retained.is_empty() {
+        String::new()
+    }
+    else {
+        format!("; {stream}: {retained}")
+    };
+    Err(AifixError::process(format!(
+        "native fix command exited with status {status}: {parse_failure}{detail}",
+        status = status_label(status.code())
+    )))
 }
 
 /// Build metadata for all built-in profiles, applying configured overrides.
@@ -672,6 +1006,8 @@ fn built_in_profile_info(
             RUST_PROFILE | TYPESCRIPT_PROFILE | AGDA_PROFILE | NUSHELL_PROFILE
         ),
         extra_args: !matches!(name, AUTO_PROFILE),
+        native_fix_command_family: matches!(name, RUST_PROFILE)
+            .then(|| RUST_COMMAND_FAMILY.to_owned()),
         detected,
         detection_reason,
     }
@@ -685,8 +1021,9 @@ fn configured_profile_info(
 ) -> BatchProfileInfo
 {
     let (builtin_detected, builtin_reason) = detect_builtin_profile(name, cwd);
-    let detected = profile.auto || builtin_detected;
-    let detection_reason = if profile.auto {
+    let auto = profile.auto.unwrap_or(false);
+    let detected = auto || builtin_detected;
+    let detection_reason = if auto {
         "configured profile has auto = true".to_owned()
     }
     else {
@@ -701,16 +1038,23 @@ fn configured_profile_info(
             .unwrap_or(Protocol::Auto),
         command_family: profile
             .argv
-            .first()
+            .as_ref()
+            .and_then(|argv| argv.first())
             .cloned()
             .unwrap_or_else(|| command_family_for_profile(name)),
         source: "config".to_owned(),
-        defaultable: profile.auto
+        defaultable: auto
             || matches!(
                 name,
                 RUST_PROFILE | TYPESCRIPT_PROFILE | AGDA_PROFILE | NUSHELL_PROFILE
             ),
         extra_args: true,
+        native_fix_command_family: profile
+            .fix_argv
+            .as_ref()
+            .and_then(|argv| argv.first())
+            .cloned()
+            .or_else(|| matches!(name, RUST_PROFILE).then(|| RUST_COMMAND_FAMILY.to_owned())),
         detected,
         detection_reason,
     }
@@ -725,14 +1069,7 @@ fn run_auto_selected_profile(
 ) -> Result<Digest, AifixError>
 {
     let configured = config.profiles.get(&profile.name);
-    let max_output_bytes = max_output_override
-        .or_else(|| {
-            let selected_config = configured?;
-            selected_config.max_output_bytes
-        })
-        .or(config.max_output_bytes)
-        .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
-    let limits = BatchLimits::new(None, max_output_bytes);
+    let limits = auto_profile_limits(config, configured, max_output_override);
     configured.map_or_else(
         || run_profile_with_limits(&profile.name, &[], profile.protocol, cwd, limits),
         |configured| {
@@ -746,6 +1083,61 @@ fn run_auto_selected_profile(
             )
         },
     )
+}
+
+/// Validate one auto-selected diagnostic command without executing it.
+fn run_auto_selected_preflight(
+    config: &Config,
+    profile: &BatchProfileInfo,
+) -> Result<(), AifixError>
+{
+    config.profiles.get(&profile.name).map_or_else(
+        || profile_command(&profile.name, &[]).map(drop),
+        |configured| configured_profile_command(&profile.name, configured, &[]).map(drop),
+    )
+}
+
+/// Run only one auto-selected profile's native fix phase.
+fn run_auto_selected_native_fix(
+    config: &Config,
+    profile: &BatchProfileInfo,
+    cwd: &Utf8Path,
+    max_output_override: Option<usize>,
+) -> Result<(), AifixError>
+{
+    let configured = config.profiles.get(&profile.name);
+    let limits = auto_profile_limits(config, configured, max_output_override);
+    configured.map_or_else(
+        || run_profile_native_fix(&profile.name, &[], profile.protocol, cwd, limits),
+        |configured| {
+            configured_profile_command(&profile.name, configured, &[]).map(drop)?;
+            run_configured_native_fix(
+                &profile.name,
+                configured,
+                &[],
+                profile.protocol,
+                cwd,
+                limits,
+            )
+        },
+    )
+}
+
+/// Resolve the output-processing limits for one auto-selected profile.
+fn auto_profile_limits(
+    config: &Config,
+    configured: Option<&ProfileConfig>,
+    max_output_override: Option<usize>,
+) -> BatchLimits
+{
+    let max_output_bytes = max_output_override
+        .or_else(|| {
+            let profile = configured?;
+            profile.max_output_bytes
+        })
+        .or(config.max_output_bytes)
+        .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
+    BatchLimits::new(None, max_output_bytes)
 }
 
 /// Render profile metadata as Markdown.
@@ -769,6 +1161,13 @@ fn render_profile_catalog_markdown(profiles: &[BatchProfileInfo]) -> String
         markdown.push_str(&profile.source);
         markdown.push_str("`, defaultable ");
         markdown.push_str(if profile.defaultable { "yes" } else { "no" });
+        markdown.push_str(", native fix command family ");
+        markdown.push_str(
+            profile
+                .native_fix_command_family
+                .as_deref()
+                .unwrap_or("none"),
+        );
         markdown.push_str(", detected ");
         markdown.push_str(if profile.detected { "yes" } else { "no" });
         markdown.push_str(" — ");

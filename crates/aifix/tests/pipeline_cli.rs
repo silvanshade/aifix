@@ -463,6 +463,32 @@ mod tests
         Ok(())
     }
 
+    /// Writes a Cargo package containing one machine-applicable Clippy warning.
+    fn write_fixable_cargo_package(root: &Path) -> Result<(), Box<dyn Error>>
+    {
+        write_minimal_cargo_package(root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn values_len() -> usize {\n    let values = vec![1, 2, 3];\n    values.len()\n}\n",
+        )?;
+        Ok(())
+    }
+
+    /// Initializes the fixture repository required by Cargo's fix safeguards.
+    fn initialize_git_repository(root: &Path) -> Result<(), Box<dyn Error>>
+    {
+        let output = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(root)
+            .output()?;
+        require(output.status.success(), || {
+            format!(
+                "git init should succeed for fix fixture; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    }
+
     /// Converts successful command output into a UTF-8 string.
     ///
     /// # Contract
@@ -737,6 +763,7 @@ mod tests
             "nonzero",
             "parseable diagnostics",
             "native tools",
+            "native-fix",
         ] {
             require(instructions.contains(term), || {
                 format!("initialize instructions should mention {term:?}: {instructions}")
@@ -781,6 +808,19 @@ mod tests
                 || format!("tools/list should include {expected}: {result}"),
             )?;
         }
+
+        let batch = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("aifix_batch"))
+            .ok_or_else(|| std::io::Error::other("tools/list should contain aifix_batch"))?;
+        require(
+            batch
+                .get("inputSchema")
+                .and_then(|schema| schema.get("properties"))
+                .and_then(|properties| properties.get("fix"))
+                .is_some(),
+            || format!("aifix_batch schema should expose explicit fix mode: {batch}"),
+        )?;
         Ok(())
     }
 
@@ -792,6 +832,15 @@ mod tests
     {
         let cwd = create_temp_dir("cli-profile-catalog-rust")?;
         write_minimal_cargo_package(&cwd)?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.custom-fixer]\n",
+                "argv = [\"rustc\", \"--version\"]\n",
+                "fix_argv = [\"rustc\", \"--version\"]\n",
+                "protocol = \"nushell-text\"\n"
+            ),
+        )?;
         let xdg_home = create_temp_dir("cli-profile-catalog-xdg")?;
         let output = run_aifix_with_isolated_config(
             [
@@ -806,7 +855,15 @@ mod tests
         )?;
         let catalog = successful_json(output)?;
 
-        for expected in ["auto", "rust", "typescript", "agda", "nushell", "custom"] {
+        for expected in [
+            "auto",
+            "rust",
+            "typescript",
+            "agda",
+            "nushell",
+            "custom",
+            "custom-fixer",
+        ] {
             let profile = profile_named(&catalog, expected)?;
             require(
                 profile.get("protocol").and_then(Value::as_str).is_some(),
@@ -832,7 +889,92 @@ mod tests
                 .is_some_and(|reason| reason.contains("Cargo.toml")),
             || format!("rust detection should explain the Cargo.toml marker: {rust}"),
         )?;
+        require(
+            rust.get("native_fix_command_family")
+                .and_then(Value::as_str)
+                == Some("cargo"),
+            || format!("built-in Rust profile should advertise native fix support: {rust}"),
+        )?;
+        require(
+            profile_named(&catalog, "typescript")?
+                .get("native_fix_command_family")
+                .is_none(),
+            || format!("TypeScript profile should not invent native fix support: {catalog}"),
+        )?;
+        require(
+            profile_named(&catalog, "custom-fixer")?
+                .get("native_fix_command_family")
+                .and_then(Value::as_str)
+                == Some("rustc"),
+            || format!("configured fix_argv should advertise native fix support: {catalog}"),
+        )?;
         Ok(())
+    }
+
+    /// Verifies project profile fields can explicitly clear a user-level fix
+    /// command and disable user-level automatic participation.
+    #[test]
+    fn project_config_clears_user_fix_argv_and_auto_true() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("project-clears-user-fix")?;
+        let xdg_home = create_temp_dir("project-clears-user-fix-xdg")?;
+        let user_dir = xdg_home.join("aifix");
+        fs::create_dir_all(&user_dir)?;
+        fs::write(
+            user_dir.join("aifix.toml"),
+            concat!(
+                "[profiles.layered]\n",
+                "argv = [\"rustc\", \"--version\"]\n",
+                "fix_argv = [\"rustc\", \"--version\"]\n",
+                "protocol = \"nushell-text\"\n",
+                "auto = true\n"
+            ),
+        )?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.layered]\n",
+                "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
+                "fix_argv = []\n",
+                "protocol = \"typescript-text\"\n",
+                "auto = false\n"
+            ),
+        )?;
+        let catalog_output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("config"),
+                OsStr::new("profiles"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ],
+            &xdg_home,
+        )?;
+        let catalog = successful_json(catalog_output)?;
+        let layered = profile_named(&catalog, "layered")?;
+        require(
+            layered.get("command_family").and_then(Value::as_str) == Some("printf")
+                && layered.get("protocol").and_then(Value::as_str) == Some("typescript-text")
+                && layered.get("detected").and_then(Value::as_bool) == Some(false)
+                && layered.get("native_fix_command_family").is_none(),
+            || format!("project profile should override explicit user fields: {layered}"),
+        )?;
+
+        let fix_output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("layered"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(fix_output)?;
+        require(stderr.contains("no native fix command"), || {
+            format!("cleared user fix argv should not execute: {stderr}")
+        })
     }
 
     /// Verifies unknown CLI batch profiles fail with valid-profile recovery
@@ -869,6 +1011,32 @@ mod tests
             })?;
         }
         Ok(())
+    }
+
+    /// Verifies named profiles without a declared native fix command fail
+    /// before attempting tool execution.
+    #[test]
+    fn cli_batch_fix_rejects_unsupported_profile() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-unsupported-fix")?;
+        let xdg_home = create_temp_dir("cli-unsupported-fix-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("typescript"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(stderr.contains("no native fix command"), || {
+            format!("unsupported fix should explain the missing capability: {stderr}")
+        })?;
+        require(stderr.contains("profiles.typescript.fix_argv"), || {
+            format!("unsupported fix should explain how to configure a fix command: {stderr}")
+        })
     }
 
     /// Verifies MCP profile discovery returns parseable catalog JSON with
@@ -2200,6 +2368,582 @@ diff --git a/src/main.rs b/src/main.rs
             )?;
         }
         Ok(())
+    }
+
+    /// Verifies MCP native-fix mode mutates a fixable Rust project and returns
+    /// only the diagnostics remaining after the fix pass.
+    #[test]
+    fn mcp_batch_native_fix_returns_residual_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("mcp-native-fix")?;
+        write_fixable_cargo_package(&cwd)?;
+        initialize_git_repository(&cwd)?;
+        let cwd_text = path_to_str(&cwd)?;
+        let xdg_home = create_temp_dir("mcp-native-fix-xdg")?;
+        let responses = run_mcp_with_isolated_config(
+            &[
+                mcp_initialize(1),
+                mcp_initialized_notification(),
+                mcp_tool_call(
+                    2,
+                    "aifix_batch",
+                    &json!({
+                        "profile": "rust",
+                        "cwd": cwd_text,
+                        "format": "compact-json",
+                        "fix": true
+                    }),
+                ),
+            ],
+            &xdg_home,
+        )?;
+        let text = mcp_tool_text(mcp_response_by_id(&responses, 2)?)?;
+        let digest: Value = serde_json::from_str(&text)?;
+        require(
+            digest
+                .get("counts")
+                .and_then(|counts| counts.get("total"))
+                .and_then(Value::as_u64)
+                == Some(0),
+            || format!("native fix should return only residual diagnostics: {digest}"),
+        )?;
+        let source = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        require(!source.contains("vec!"), || {
+            format!("Clippy should apply the machine-applicable fix: {source}")
+        })
+    }
+
+    /// Verifies the built-in Rust fix retains Cargo's missing-VCS safeguard.
+    #[test]
+    fn cli_batch_native_fix_rejects_missing_vcs_without_mutation() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-native-fix-no-vcs")?;
+        write_fixable_cargo_package(&cwd)?;
+        let before = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        let xdg_home = create_temp_dir("cli-native-fix-no-vcs-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("rust"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let after = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        require(
+            stderr.contains("native fix command exited") && after == before,
+            || format!("missing VCS should fail before mutation: {stderr}; source: {after}"),
+        )
+    }
+
+    /// Verifies the built-in Rust fix intentionally accepts staged source
+    /// changes through Cargo's `--allow-dirty` contract.
+    #[test]
+    fn cli_batch_native_fix_accepts_staged_changes() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-native-fix-staged")?;
+        write_minimal_cargo_package(&cwd)?;
+        fs::write(
+            cwd.join("src/lib.rs"),
+            "pub fn values_len() -> usize {\n    [1, 2, 3].len()\n}\n",
+        )?;
+        initialize_git_repository(&cwd)?;
+        let add = Command::new("git")
+            .args(["add", "Cargo.toml", "src/lib.rs"])
+            .current_dir(&cwd)
+            .output()?;
+        require(add.status.success(), || {
+            format!(
+                "git add should stage the baseline fixture: {}",
+                String::from_utf8_lossy(&add.stderr)
+            )
+        })?;
+        let commit = Command::new("git")
+            .args([
+                "-c",
+                "user.name=aifix tests",
+                "-c",
+                "user.email=aifix@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "baseline",
+            ])
+            .current_dir(&cwd)
+            .output()?;
+        require(commit.status.success(), || {
+            format!(
+                "git commit should create the fixture baseline: {}",
+                String::from_utf8_lossy(&commit.stderr)
+            )
+        })?;
+        fs::write(
+            cwd.join("src/lib.rs"),
+            "pub fn values_len() -> usize {\n    let values = vec![1, 2, 3];\n    values.len()\n}\n",
+        )?;
+        let stage = Command::new("git")
+            .args(["add", "src/lib.rs"])
+            .current_dir(&cwd)
+            .output()?;
+        require(stage.status.success(), || {
+            format!(
+                "git add should stage the fixable source: {}",
+                String::from_utf8_lossy(&stage.stderr)
+            )
+        })?;
+        let xdg_home = create_temp_dir("cli-native-fix-staged-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("rust"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let source = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        require(
+            digest
+                .get("counts")
+                .and_then(|counts| counts.get("total"))
+                .and_then(Value::as_u64)
+                == Some(0)
+                && !source.contains("vec!"),
+            || format!("staged source should be fixed and re-diagnosed: {digest}; {source}"),
+        )
+    }
+
+    /// Verifies profile-local `fix_argv` overrides the built-in fix command and
+    /// still precedes the residual diagnostic pass.
+    #[test]
+    fn cli_batch_configured_fix_argv_runs_before_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-configured-fix")?;
+        write_minimal_cargo_package(&cwd)?;
+        fs::write(cwd.join("src/lib.rs"), "pub fn answer()->u8{42}\n")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.rust]\n",
+                "fix_argv = [\"cargo\", \"fmt\", \"--all\"]\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-configured-fix-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("rust"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        require(
+            digest
+                .get("counts")
+                .and_then(|counts| counts.get("total"))
+                .and_then(Value::as_u64)
+                == Some(0),
+            || format!("configured fix should precede residual diagnostics: {digest}"),
+        )?;
+        let source = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        require(source == "pub fn answer() -> u8 {\n    42\n}\n", || {
+            format!("configured cargo fmt fix should mutate the source: {source}")
+        })
+    }
+
+    /// Verifies configured `custom` consumes trailing argv as its complete
+    /// diagnostic command without appending it to an explicit fix command.
+    #[test]
+    fn cli_batch_configured_custom_keeps_fix_argv_independent_from_extra_args()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-configured-custom-fix")?;
+        fs::write(cwd.join("target.txt"), "original\n")?;
+        fs::write(cwd.join("replacement.txt"), "mutated\n")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.custom]\n",
+                "fix_argv = [\"cp\", \"replacement.txt\", \"target.txt\"]\n",
+                "protocol = \"typescript-text\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-configured-custom-fix-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("custom"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+                OsStr::new("--"),
+                OsStr::new("printf"),
+                OsStr::new("sample.ts(1,1): error TS4321: residual\n"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let target = fs::read_to_string(cwd.join("target.txt"))?;
+        require(
+            json_contains_str(&digest, "TS4321") && target == "mutated\n",
+            || {
+                format!(
+                    "custom residual argv and independent fixer should both run: {digest}; {target}"
+                )
+            },
+        )
+    }
+
+    /// Verifies configured fix output may use a different protocol from the
+    /// residual diagnostic command.
+    #[test]
+    fn cli_batch_configured_fix_protocol_classifies_nonzero_fix_output()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-configured-fix-protocol")?;
+        write_minimal_cargo_package(&cwd)?;
+        fs::write(
+            cwd.join("src/lib.rs"),
+            "pub fn broken() { let _: u8 = \"not a number\"; }\n",
+        )?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.protocol-split]\n",
+                "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
+                "fix_argv = [\"cargo\", \"check\", \"--quiet\", \"--message-format=json\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "fix_protocol = \"clippy-json\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-configured-fix-protocol-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("protocol-split"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        require(
+            digest
+                .get("counts")
+                .and_then(|counts| counts.get("total"))
+                .and_then(Value::as_u64)
+                == Some(1),
+            || format!("residual TypeScript diagnostic should remain: {digest}"),
+        )?;
+        require(
+            digest
+                .get("groups")
+                .and_then(Value::as_array)
+                .is_some_and(|groups| {
+                    groups
+                        .iter()
+                        .any(|group| group.get("code").and_then(Value::as_str) == Some("TS1000"))
+                }),
+            || format!("residual digest should use the diagnostic protocol: {digest}"),
+        )
+    }
+
+    /// Verifies a nonzero fix command cannot masquerade as diagnostic output
+    /// when its selected parser recognizes no diagnostics.
+    #[test]
+    fn cli_batch_fix_rejects_nonzero_output_without_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-empty-fix-diagnostics")?;
+        fs::write(
+            cwd.join("broken.rs"),
+            "fn main() { let _: u8 = \"not a number\"; }\n",
+        )?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.empty-fix]\n",
+                "argv = [\"rustc\", \"--version\"]\n",
+                "fix_argv = [\"rustc\", \"broken.rs\", \"--error-format=json\"]\n",
+                "protocol = \"clippy-json\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-empty-fix-diagnostics-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("empty-fix"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(stderr.contains("output contained no diagnostics"), || {
+            format!("nonzero fix output without diagnostics should fail explicitly: {stderr}")
+        })
+    }
+
+    /// Verifies a signal-terminated fixer fails even after emitting parseable
+    /// diagnostics because its mutations may be partial.
+    #[test]
+    fn cli_batch_fix_rejects_signal_terminated_command() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-signaled-fix")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.signaled-fix]\n",
+                "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
+                "fix_argv = [\"sh\", \"-c\", \"printf 'sample.ts(1,1): error TS1000: fix\\\\n'; kill -TERM $$\"]\n",
+                "protocol = \"typescript-text\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-signaled-fix-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("signaled-fix"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(
+            stderr.contains("terminated by signal") && stderr.contains("partial mutations"),
+            || format!("signal-terminated fixer should fail explicitly: {stderr}"),
+        )
+    }
+
+    /// Verifies an explicitly empty fix executable is a typed argument error,
+    /// not a debug-build panic.
+    #[test]
+    fn cli_batch_fix_rejects_empty_executable() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-empty-fix-executable")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.empty-executable]\n",
+                "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
+                "fix_argv = [\"\"]\n",
+                "protocol = \"typescript-text\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-empty-fix-executable-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("empty-executable"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(
+            stderr.contains("native fix command executable must not be empty"),
+            || format!("empty fix executable should be rejected without panic: {stderr}"),
+        )
+    }
+
+    /// Verifies an invalid residual diagnostic command is rejected before its
+    /// valid fixer can mutate the workspace.
+    #[test]
+    fn cli_batch_fix_preflights_diagnostic_executable_before_mutation() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-fix-diagnostic-preflight")?;
+        fs::write(cwd.join("target.txt"), "original\n")?;
+        fs::write(cwd.join("replacement.txt"), "mutated\n")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.invalid-diagnostic]\n",
+                "argv = [\"\"]\n",
+                "fix_argv = [\"cp\", \"replacement.txt\", \"target.txt\"]\n",
+                "protocol = \"typescript-text\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-fix-diagnostic-preflight-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("invalid-diagnostic"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let target = fs::read_to_string(cwd.join("target.txt"))?;
+        require(
+            stderr.contains("configured profile diagnostic executable must not be empty")
+                && target == "original\n",
+            || format!("diagnostic preflight should prevent mutation: {stderr}; {target}"),
+        )
+    }
+
+    /// Verifies auto mode reports a configured profile with no diagnostic argv
+    /// and does not run its otherwise valid fixer.
+    #[test]
+    fn auto_batch_fix_preflights_missing_diagnostic_argv_before_mutation()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-fix-missing-diagnostic-argv")?;
+        fs::write(cwd.join("target.txt"), "original\n")?;
+        fs::write(cwd.join("replacement.txt"), "mutated\n")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.missing-diagnostic]\n",
+                "fix_argv = [\"cp\", \"replacement.txt\", \"target.txt\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "auto = true\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("auto-fix-missing-diagnostic-argv-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let status = profile_status_named(&digest, "missing-diagnostic")?;
+        let target = fs::read_to_string(cwd.join("target.txt"))?;
+        require(
+            status.get("state").and_then(Value::as_str) == Some("failed")
+                && json_contains_str(status, "requires a nonempty diagnostic `argv`")
+                && target == "original\n",
+            || format!("auto preflight should report failure without mutation: {status}; {target}"),
+        )
+    }
+
+    /// Verifies permissive automatic parsing cannot convert arbitrary nonzero
+    /// fixer output into an accepted diagnostic result.
+    #[test]
+    fn cli_batch_fix_rejects_nonzero_output_with_auto_protocol() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-fix-auto-protocol")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.auto-protocol]\n",
+                "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
+                "fix_argv = [\"sh\", \"-c\", \"printf 'fatal: lock failed\\\\n' >&2; exit 1\"]\n",
+                "protocol = \"auto\"\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-fix-auto-protocol-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto-protocol"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(
+            stderr.contains("automatic protocol is too permissive")
+                && stderr.contains("fatal: lock failed"),
+            || format!("nonzero auto-protocol fix output should fail explicitly: {stderr}"),
+        )
+    }
+
+    /// Verifies auto mode completes all fix phases before collecting any
+    /// diagnostics and still diagnoses profiles without fix capability.
+    #[test]
+    fn auto_batch_fix_runs_global_fix_phase_before_residual_diagnostics()
+    -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-global-fix-phase")?;
+        write_fixable_cargo_package(&cwd)?;
+        initialize_git_repository(&cwd)?;
+        fs::write(
+            cwd.join("prepared.rs"),
+            "pub fn values_len() -> usize {\n    let values = vec![1, 2, 3];\n    values.len()\n}\n",
+        )?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.later]\n",
+                "argv = [\"printf\", \"later.ts(1,1): error TS2000: later residual\\n\"]\n",
+                "fix_argv = [\"cp\", \"prepared.rs\", \"src/lib.rs\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "auto = true\n",
+                "\n",
+                "[profiles.unsupported]\n",
+                "argv = [\"printf\", \"unsupported.ts(1,1): error TS3000: unsupported residual\\n\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "auto = true\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("auto-global-fix-phase-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--fix"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let rust = profile_status_named(&digest, "rust")?;
+        require(
+            rust.get("state").and_then(Value::as_str) == Some("ran")
+                && rust
+                    .get("diagnostic_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count > 0),
+            || format!("Rust diagnostics should observe the later fix mutation: {digest}"),
+        )?;
+        let unsupported = profile_status_named(&digest, "unsupported")?;
+        require(
+            unsupported.get("state").and_then(Value::as_str) == Some("ran")
+                && unsupported
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.contains("no native fix command")),
+            || format!("unsupported auto profile should remain diagnostic-only: {unsupported}"),
+        )?;
+        let source = fs::read_to_string(cwd.join("src/lib.rs"))?;
+        require(source.contains("vec!"), || {
+            format!("later fixer should leave its mutation for residual diagnostics: {source}")
+        })
     }
 
     /// Verifies `batch auto` reports both Rust and TypeScript statuses for a

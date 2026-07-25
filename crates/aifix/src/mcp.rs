@@ -31,8 +31,11 @@ use crate::batch::is_known_profile;
 use crate::batch::profile_catalog;
 use crate::batch::render_profile_catalog;
 use crate::batch::run_auto_profile;
+use crate::batch::run_auto_profile_with_native_fix;
 use crate::batch::run_configured_profile;
+use crate::batch::run_configured_profile_with_native_fix;
 use crate::batch::run_profile_with_limits;
+use crate::batch::run_profile_with_native_fix;
 use crate::batch::unknown_profile_message;
 use crate::cache::ReplayMode;
 use crate::cache::diagnostic_cache_path;
@@ -67,14 +70,16 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Server-level guidance returned to MCP clients during initialization.
 const SERVER_INSTRUCTIONS: &str = concat!(
-    "aifix normalizes diagnostics from parseable tool output; it does not invent fixes or apply changes ",
-    "except explicit cached replay apply mode. Use aifix_pipeline for already-captured diagnostics, ",
-    "aifix_batch_profiles to discover project profiles before choosing a profile, and aifix_batch with ",
-    "profile auto for project-wide diagnostics. Do not invent profile names or assume extraArgs are cargo flags; ",
-    "extraArgs are profile-specific and auto rejects them. Treat parseable diagnostics from nonzero exits as ",
-    "findings rather than automatic operational failure. Use aifix_dedupe/aifix_guidance for repeated diagnostic ",
-    "triage. Use aifix_report_fix/aifix_replay_fixes only for explicitly recorded cached patch replay; respect ",
-    "suggest, dry-run, and apply modes. Verify repaired code with the native tools and tests that own it."
+    "aifix normalizes diagnostics from parseable tool output; it does not invent fixes. It applies changes only ",
+    "when batch native-fix mode or cached replay apply mode is explicitly requested. Use aifix_pipeline for ",
+    "already-captured diagnostics, aifix_batch_profiles to discover project profiles before choosing a profile, ",
+    "and aifix_batch with profile auto for project-wide diagnostics. Set fix true only when native tool fixes ",
+    "should mutate the workspace before the residual diagnostic pass. Do not invent profile names or assume ",
+    "extraArgs are cargo flags; extraArgs are profile-specific and auto rejects them. Treat parseable diagnostics ",
+    "from nonzero exits as findings rather than automatic operational failure. Use aifix_dedupe/aifix_guidance ",
+    "for repeated diagnostic triage. Use aifix_report_fix/aifix_replay_fixes only for explicitly recorded cached ",
+    "patch replay; respect suggest, dry-run, and apply modes. Verify repaired code with the native tools and tests ",
+    "that own it."
 );
 
 /// Run the line-oriented stdio MCP server until stdin reaches EOF.
@@ -236,7 +241,7 @@ fn tools_list_result() -> Value
             ),
             tool_schema(
                 "aifix_batch",
-                "Run a named diagnostic profile, or omit profile/use auto for project-wide diagnostics; query aifix_batch_profiles when unsure and do not treat extraArgs as cargo flags.",
+                "Run a named diagnostic profile, or omit profile/use auto for project-wide diagnostics; optional fix mode runs declared native fixes before returning residual diagnostics.",
                 &batch_schema(),
             ),
             tool_schema(
@@ -311,12 +316,13 @@ fn batch_schema() -> Value
         "type": "object",
         "properties": {
             "profile": { "type": "string", "default": AUTO_PROFILE, "description": "Profile name. Omit or pass an empty string to use auto." },
-            "extraArgs": { "type": "array", "items": { "type": "string" }, "description": "Profile-specific argv appended to named profiles; rejected for auto and not treated as cargo flags." },
+            "extraArgs": { "type": "array", "items": { "type": "string" }, "description": "Profile-specific argv appended to named diagnostic commands and built-in fallback fix commands; explicit configured fix_argv remains independent. Rejected for auto and not treated as cargo flags." },
             "cwd": { "type": "string" },
             "protocol": protocol_schema(),
             "format": format_schema(),
             "maxDiagnostics": { "type": "integer", "minimum": 0 },
             "maxOutputBytes": { "type": "integer", "minimum": 0, "description": "Maximum bytes accepted from each invoked-tool output stream." },
+            "fix": { "type": "boolean", "description": "Run supported native automatic fixes before the residual diagnostic pass. Mutates the workspace." },
             "dedupe": { "type": "boolean" },
             "recordMetrics": { "type": "boolean" },
         },
@@ -616,12 +622,22 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
     let profile_output_limit = profile_config.and_then(|config| config.max_output_bytes);
     let max_output_override = args.max_output_bytes.or(profile_output_limit);
     let mut digest = if profile == AUTO_PROFILE {
-        run_auto_profile(
-            &loaded_config.config,
-            &cwd,
-            max_diagnostics,
-            max_output_override,
-        )
+        if args.fix {
+            run_auto_profile_with_native_fix(
+                &loaded_config.config,
+                &cwd,
+                max_diagnostics,
+                max_output_override,
+            )
+        }
+        else {
+            run_auto_profile(
+                &loaded_config.config,
+                &cwd,
+                max_diagnostics,
+                max_output_override,
+            )
+        }
     }
     else {
         let max_output_bytes = max_output_override
@@ -633,18 +649,29 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
             .or_else(|| default_protocol_for_profile(profile))
             .or(loaded_config.config.default_protocol)
             .unwrap_or(Protocol::Auto);
-        if let Some(profile_config) = profile_config {
-            run_configured_profile(
+        match (profile_config, args.fix) {
+            | (Some(profile_config), true) => run_configured_profile_with_native_fix(
                 profile,
                 profile_config,
                 &args.extra_args,
                 protocol,
                 &cwd,
                 limits,
-            )?
-        }
-        else {
-            run_profile_with_limits(profile, &args.extra_args, protocol, &cwd, limits)?
+            )?,
+            | (Some(profile_config), false) => run_configured_profile(
+                profile,
+                profile_config,
+                &args.extra_args,
+                protocol,
+                &cwd,
+                limits,
+            )?,
+            | (None, true) => {
+                run_profile_with_native_fix(profile, &args.extra_args, protocol, &cwd, limits)?
+            },
+            | (None, false) => {
+                run_profile_with_limits(profile, &args.extra_args, protocol, &cwd, limits)?
+            },
         }
     };
     if args.dedupe || args.record_metrics {
@@ -1074,7 +1101,8 @@ struct BatchArgs
 {
     /// Profile name to execute; omitted or empty defaults to auto.
     profile: Option<String>,
-    /// Extra argv values appended to the selected profile.
+    /// Extra argv appended to named diagnostic and built-in fallback fix
+    /// commands.
     #[serde(default)]
     extra_args: Vec<String>,
     /// Working directory for config discovery and process execution.
@@ -1087,6 +1115,9 @@ struct BatchArgs
     max_diagnostics: Option<usize>,
     /// Optional per-stream output byte budget.
     max_output_bytes: Option<usize>,
+    /// Whether to run native automatic fixes before collecting diagnostics.
+    #[serde(default)]
+    fix: bool,
     /// Whether to filter already-seen diagnostics.
     #[serde(default)]
     dedupe: bool,

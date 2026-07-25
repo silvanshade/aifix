@@ -35,6 +35,9 @@
 * Batch execution now treats omitted profiles and explicit `auto` as the automatic profile, aggregates applicable Rust, TypeScript, Agda, and Nushell diagnostics, and reports per-profile statuses.
 * Batch extra args are documented as profile-specific, and `auto` rejects extra args instead of forwarding them ambiguously.
 * MCP batch tools now expose profile listing, accept omitted or empty batch profiles, and return structured recovery data for unknown profiles.
+* Batch `--fix` and MCP `fix: true` now run profile-owned native automatic fixes before a fresh residual diagnostic pass.
+* The Rust profile supplies `cargo clippy --fix --allow-dirty`; configured profiles may declare complete direct-argv `fix_argv`, select a distinct non-automatic `fix_protocol` for nonzero output, and advertise the fix command family through profile discovery.
+* Named unsupported fix requests fail with configuration recovery, while automatic runs keep unsupported profiles diagnostic-only.
 
 ### Integration coverage
 
@@ -47,7 +50,9 @@
   + custom batch command execution through a real executable;
   + over-limit custom batch stdout rejection;
   + non-UTF-8 batch extra-arg rejection;
-  + non-file project config rejection.
+  + non-file project config rejection;
+  + native Clippy mutation for clean and staged fixtures with post-fix residual diagnostics;
+  + configured `fix_argv` execution, custom-command argument independence, distinct fix-output protocol classification, permissive auto-protocol rejection, pre-mutation command validation, and unsupported-profile CLI errors;
 * Added `tests/fixtures/clippy.jsonl` as the current Clippy fixture shared by integration and benchmark paths.
 * Added `tests/fixtures/agda.txt` as the Agda CLI text fixture shared by pipeline integration coverage.
 
