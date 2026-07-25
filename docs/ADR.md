@@ -340,3 +340,44 @@ Continue to execute direct argv without a shell and preserve parseable nonzero d
 * Spill files are create-new, mode `0600` on Unix, and deleted when capture state leaves scope.
 * Large diagnostic-count memory remains proportional to normalized diagnostics and their preserved raw records, not the complete child stream.
 * Explicit output budgets still fail with a stream-, executable-, and byte-specific process error.
+
+## ADR-0012: Run explicit native fixes before residual diagnostics
+
+Status: Accepted  
+Date: 2026-07-25  
+Bead: `aifix-tip.1`
+
+### ADR-0012 context
+
+Batch mode previously captured diagnostics without mutating source.
+An agent that wanted tool-native automatic fixes had to invoke the tool separately, reconstruct profile-specific argv, then call `aifix` again to learn which diagnostics remained.
+That duplicated adapter knowledge and made the residual-diagnostic contract unavailable through the MCP batch tool.
+
+Native fix support varies by profile and can mutate a dirty workspace.
+Treating a generic `--fix` flag as text to append to every diagnostic command would invent unsupported tool behavior and could place flags on the wrong side of an argv separator.
+
+### ADR-0012 decision
+
+Add an explicit opt-in native-fix phase to batch execution.
+CLI `--fix` and MCP `fix: true` request mutation; diagnostic-only behavior remains the default.
+
+Each profile owns an optional native fix argv.
+The built-in Rust profile uses `cargo clippy --fix --allow-dirty` with the same target, feature, message-format, and lint-cap settings as its diagnostic pass.
+Configured profiles may declare `fix_argv`; commands remain direct argv and never pass through a shell.
+Profile discovery reports native-fix capability.
+
+A native fix runs once before the ordinary diagnostic command.
+Successful fix commands may emit non-diagnostic output.
+A nonzero fix exit is tolerated only when its bounded output parses as diagnostics, because fixable and unfixable findings may coexist; unparsable nonzero output is an operational failure.
+The returned digest is built only from the subsequent diagnostic pass.
+
+For a named profile, requesting a missing native fix command is an explicit argument error with configuration recovery.
+For `auto`, fixable detected profiles run their native fix phase while profiles without one still run diagnostically and report that limitation in profile status metadata.
+
+### ADR-0012 consequences
+
+* Agents can request one mutating batch operation and receive only residual diagnostics.
+* Profile configuration is flexible enough for other native fix tools without exposing arbitrary shell commands.
+* Rust fixes opt into dirty working trees but retain Cargo's staged-change and missing-VCS safeguards.
+* Native fix output uses the existing bounded capture and UTF-8 contracts.
+* LSP code actions remain a separate capability because their lifecycle and safety policy are not expressible as one profile argv.
