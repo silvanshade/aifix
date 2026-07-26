@@ -381,3 +381,59 @@ For `auto`, fixable detected profiles run their native fix phase while profiles 
 * Rust `--allow-dirty` fixes intentionally permit unstaged and staged changes; Cargo's missing-VCS safeguard remains active.
 * Native fix output uses the existing bounded capture and UTF-8 contracts.
 * LSP code actions remain a separate capability because their lifecycle and safety policy are not expressible as one profile argv.
+
+## ADR-0013: Apply bounded diagnostic-correlated LSP code actions
+
+Status: Accepted  
+Date: 2026-07-25  
+Bead: `aifix-tip.2`
+
+### ADR-0013 context
+
+Some language servers expose precise repairs that compiler and linter fix modes do not.
+The Language Server Protocol returns code actions for a document range and diagnostic context; actions may contain workspace edits, commands, deferred resolution data, or interactive choices.
+Applying every returned action would be unsafe because actions can be ambiguous, disabled, stale, unrelated to the requested diagnostic, or backed by commands with arbitrary server-defined behavior.
+
+### ADR-0013 decision
+
+Add a one-shot, opt-in LSP code-action phase to batch execution.
+CLI `--code-actions` and MCP `codeActions: true` request this mutation; ordinary batch and pipeline runs remain diagnostic-only.
+When native fix and code-action modes are both requested, native fixes run first, LSP actions run against the resulting workspace, and the ordinary profile diagnostic command runs last.
+Every requested mutation capability is validated before the first phase changes the workspace, including all participating profiles in automatic mode.
+
+Each profile may own nested `code_actions` configuration: complete direct server argv, language ID, source extensions, allowed hierarchical action kinds, exact allowed command identifiers, iteration cap, and request timeout.
+The built-in Rust profile defaults to `rust-analyzer`, Rust source files, `quickfix`, no command allowlist, 64 iterations, and 30 seconds.
+Named profiles without this capability fail explicitly.
+Automatic runs mutate only when exactly one detected profile supports code actions, reject multiple capable mutators before any mutation, and run unsupported profiles diagnostically.
+
+The client initializes one direct-argv stdio LSP process, opens matching non-symlink source files under the canonical workspace root, and collects pushed diagnostics after a bounded idle interval.
+For each diagnostic it requests `textDocument/codeAction` with that diagnostic and the configured action kinds.
+Deferred actions may use `codeAction/resolve`.
+Disabled, uncorrelated, out-of-kind, payloadless, edit-plus-command, and unallowlisted-command actions are rejected.
+A diagnostic is changed only when it has one eligible action or exactly one eligible preferred action; competing actions remain residual.
+
+Workspace edits may change text in already opened files only.
+Before applying an edit, the target must still match the last content synchronized with the server, remain under the canonical root, and satisfy any document version.
+UTF-16 ranges must be valid and non-overlapping; mixed workspace-edit representations, resource operations, confirmation-required change annotations, and actions combining edits with commands are rejected.
+All files changed by one workspace edit are staged beside their targets before replacement begins.
+On Linux and macOS, each replacement atomically exchanges the staged and target inodes, validates the displaced target against synchronized content and metadata, and removes it only after validation.
+A detected concurrent save is exchanged back; if safe restoration cannot be proved, the displaced file is retained and its path is reported.
+Any later replacement failure attempts to restore every prior file before returning a typed error.
+Platforms without an atomic file-exchange primitive reject code-action mutation during preflight.
+Server commands run only when their exact configured identifiers also appear in the server's advertised command capability.
+Each command may submit at most one `workspace/applyEdit` request through the ordinary validation and rollback path; out-of-scope, repeated, malformed, or unsafe requests receive `applied: false`.
+The exact command allowlist is a profile trust boundary: aifix cannot mediate filesystem mutations, process launches, or other effects that the language-server process performs without `workspace/applyEdit`.
+After each mutation the client synchronizes changed documents according to the server-selected full or incremental mode, waits for bounded diagnostic quiescence, and requests the next action.
+Versioned diagnostic publications older than the opened document cannot replace current state; current unversioned and unopened-document publications remain visible as residuals.
+Repeated action keys, unchanged successful actions, iteration exhaustion, the complete-session deadline, bounded request and notification queues, blocked or oversized messages, malformed protocol data, server failure, and stale edits are typed errors.
+Transient LSP `ContentModified` responses receive at most three retries inside the original request deadline.
+
+Residual LSP diagnostics are normalized through the existing adapter and combined with diagnostics from the final profile invocation.
+Process execution remains shell-free; source discovery, aggregate action queries, messages, pending notifications, complete session time, and server stderr retention are bounded.
+
+### ADR-0013 consequences
+
+* Agents can request rust-analyzer and configured-server quick fixes in the same one-shot batch interface as native fixes.
+* Automatic mutation is intentionally conservative: ambiguous or interactive actions remain for an agent or user.
+* A granular approval mode is feasible, but it needs a separate preview/selection interface with stable action summaries and workspace-version tokens so selections cannot be replayed against stale source; this decision does not add that protocol.
+* Push diagnostics have no universal completion notification for a clean document, so the client uses bounded message quiescence and the final native diagnostic invocation remains the authoritative residual compiler or linter pass.
