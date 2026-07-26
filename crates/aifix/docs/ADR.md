@@ -131,6 +131,28 @@ Consequences:
 * Named unsupported profiles fail; automatic runs continue diagnostically for unsupported profiles.
 * Native-fix output uses the same bounded process capture and UTF-8 contracts.
 
+### Apply diagnostic-correlated LSP actions conservatively
+
+Decision: opt-in batch code-action mode runs a profile-owned direct-argv language server, applies only deterministic diagnostic-correlated actions within bounded safety constraints, then combines published residuals with a fresh tool diagnostic pass.
+
+Rationale: language servers can expose precise quick fixes that compiler-native fix modes omit, but returned edits and commands are not inherently safe to apply unattended.
+Keeping server lifecycle, correlation, edit validation, and convergence behind one module preserves a small batch interface.
+
+Consequences:
+
+* The Rust built-in defaults to `rust-analyzer`; configured profiles own server argv, source matching, action kinds, exact command allowlists, iteration caps, and timeouts.
+* A sole eligible action or sole preferred action may apply; competing, disabled, uncorrelated, interactive, or unallowlisted actions remain residual.
+* Text edits are restricted to opened in-root files whose contents still match synchronized state, with matching optional versions and valid non-overlapping UTF-16 ranges; mixed edit representations, resource operations, confirmation-required annotations, and edit-plus-command actions are rejected.
+* An allowlisted command must also appear in the server's advertised command capability.
+  It executes only while one `workspace/applyEdit` request may enter the same edit-validation and rollback path; all out-of-scope, repeated, malformed, or unsafe edit requests receive `applied: false`.
+* Exact command identifiers are a profile trust boundary: aifix cannot mediate filesystem mutations or other effects that the language-server process performs without `workspace/applyEdit`.
+* Multi-file workspace edits validate and stage completely before replacement, preserve source-owned ACLs and extended attributes, and attempt rollback if replacement fails.
+  Linux and macOS replacements atomically exchange staged and target inodes, validate the displaced target, restore detected concurrent saves, and retain a displaced file when restoration cannot be proved.
+  Other platforms reject code-action mutation during preflight. macOS may add only its system-managed `com.apple.provenance` attribute to a staged file; current unversioned and unopened-document diagnostics remain residual; complete session time, action queries, pending notifications, messages, and server stderr are bounded.
+* Automatic mode permits at most one detected code-action-capable profile so a later mutator cannot stale an earlier server's residual diagnostic snapshot; other detected profiles still run diagnostically.
+* Every requested mutation capability is preflighted before mutation; native fixes precede code actions when both are requested, and the ordinary diagnostic invocation remains last.
+* A future granular approval interface is feasible only with action previews plus workspace-version tokens; it is not part of one-shot mode.
+
 ## designed direction
 
 ### Treat batch execution as diagnostic capture

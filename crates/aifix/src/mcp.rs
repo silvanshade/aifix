@@ -25,17 +25,16 @@ use crate::adapter::parse_diagnostics;
 use crate::batch::AUTO_PROFILE;
 use crate::batch::BatchLimits;
 use crate::batch::DEFAULT_BATCH_STREAM_OUTPUT_LIMIT;
+use crate::batch::FixPhases;
 use crate::batch::available_profile_names;
 use crate::batch::default_protocol_for_profile;
 use crate::batch::is_known_profile;
 use crate::batch::profile_catalog;
 use crate::batch::render_profile_catalog;
 use crate::batch::run_auto_profile;
-use crate::batch::run_auto_profile_with_native_fix;
-use crate::batch::run_configured_profile;
-use crate::batch::run_configured_profile_with_native_fix;
-use crate::batch::run_profile_with_limits;
-use crate::batch::run_profile_with_native_fix;
+use crate::batch::run_auto_profile_with_fixes;
+use crate::batch::run_configured_profile_with_fixes;
+use crate::batch::run_profile_with_fixes;
 use crate::batch::unknown_profile_message;
 use crate::cache::ReplayMode;
 use crate::cache::diagnostic_cache_path;
@@ -323,6 +322,7 @@ fn batch_schema() -> Value
             "maxDiagnostics": { "type": "integer", "minimum": 0 },
             "maxOutputBytes": { "type": "integer", "minimum": 0, "description": "Maximum bytes accepted from each invoked-tool output stream." },
             "fix": { "type": "boolean", "description": "Run supported native automatic fixes before the residual diagnostic pass. Mutates the workspace." },
+            "codeActions": { "type": "boolean", "description": "Apply bounded diagnostic-correlated LSP code actions before returning residual diagnostics. Mutates the workspace." },
             "dedupe": { "type": "boolean" },
             "recordMetrics": { "type": "boolean" },
         },
@@ -621,13 +621,15 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         .or(loaded_config.config.max_diagnostics);
     let profile_output_limit = profile_config.and_then(|config| config.max_output_bytes);
     let max_output_override = args.max_output_bytes.or(profile_output_limit);
+    let fix_phases = FixPhases::new(args.mutations.fix, args.mutations.code_actions);
     let mut digest = if profile == AUTO_PROFILE {
-        if args.fix {
-            run_auto_profile_with_native_fix(
+        if args.mutations.fix || args.mutations.code_actions {
+            run_auto_profile_with_fixes(
                 &loaded_config.config,
                 &cwd,
                 max_diagnostics,
                 max_output_override,
+                fix_phases,
             )
         }
         else {
@@ -649,29 +651,24 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
             .or_else(|| default_protocol_for_profile(profile))
             .or(loaded_config.config.default_protocol)
             .unwrap_or(Protocol::Auto);
-        match (profile_config, args.fix) {
-            | (Some(profile_config), true) => run_configured_profile_with_native_fix(
+        match profile_config {
+            | Some(profile_config) => run_configured_profile_with_fixes(
                 profile,
                 profile_config,
                 &args.extra_args,
                 protocol,
                 &cwd,
                 limits,
+                fix_phases,
             )?,
-            | (Some(profile_config), false) => run_configured_profile(
+            | None => run_profile_with_fixes(
                 profile,
-                profile_config,
                 &args.extra_args,
                 protocol,
                 &cwd,
                 limits,
+                fix_phases,
             )?,
-            | (None, true) => {
-                run_profile_with_native_fix(profile, &args.extra_args, protocol, &cwd, limits)?
-            },
-            | (None, false) => {
-                run_profile_with_limits(profile, &args.extra_args, protocol, &cwd, limits)?
-            },
         }
     };
     if args.dedupe || args.record_metrics {
@@ -1094,6 +1091,19 @@ struct PipelineArgs
     record_metrics: bool,
 }
 
+/// Mutating phases accepted as flattened `aifix_batch` arguments.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchMutationArgs
+{
+    /// Whether to run native automatic fixes before collecting diagnostics.
+    #[serde(default)]
+    fix: bool,
+    /// Whether to apply automatic diagnostic-correlated LSP code actions.
+    #[serde(default)]
+    code_actions: bool,
+}
+
 /// Arguments accepted by `aifix_batch`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1115,9 +1125,9 @@ struct BatchArgs
     max_diagnostics: Option<usize>,
     /// Optional per-stream output byte budget.
     max_output_bytes: Option<usize>,
-    /// Whether to run native automatic fixes before collecting diagnostics.
-    #[serde(default)]
-    fix: bool,
+    /// Optional mutating phases, flattened into the top-level tool arguments.
+    #[serde(flatten)]
+    mutations: BatchMutationArgs,
     /// Whether to filter already-seen diagnostics.
     #[serde(default)]
     dedupe: bool,

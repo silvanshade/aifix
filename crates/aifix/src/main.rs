@@ -17,17 +17,16 @@ use aifix::adapter::parse_diagnostics;
 use aifix::batch::AUTO_PROFILE;
 use aifix::batch::BatchLimits;
 use aifix::batch::DEFAULT_BATCH_STREAM_OUTPUT_LIMIT;
+use aifix::batch::FixPhases;
 use aifix::batch::available_profile_names;
 use aifix::batch::default_protocol_for_profile;
 use aifix::batch::is_known_profile;
 use aifix::batch::profile_catalog;
 use aifix::batch::render_profile_catalog;
 use aifix::batch::run_auto_profile;
-use aifix::batch::run_auto_profile_with_native_fix;
-use aifix::batch::run_configured_profile;
-use aifix::batch::run_configured_profile_with_native_fix;
-use aifix::batch::run_profile_with_limits;
-use aifix::batch::run_profile_with_native_fix;
+use aifix::batch::run_auto_profile_with_fixes;
+use aifix::batch::run_configured_profile_with_fixes;
+use aifix::batch::run_profile_with_fixes;
 use aifix::batch::unknown_profile_message;
 use aifix::config::Config;
 use aifix::config::config_paths;
@@ -198,6 +197,10 @@ struct BatchCommand
     /// Apply the profile's native automatic fixes before reporting diagnostics.
     #[arg(long)]
     fix: bool,
+
+    /// Apply automatic diagnostic-correlated LSP code actions before reporting.
+    #[arg(long)]
+    code_actions: bool,
 
     /// Diagnostic code allowed when `--fail-on-diagnostics` is active.
     #[arg(long = "expected-code", alias = "allow-code")]
@@ -467,6 +470,8 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
     let profile_output_limit = profile_config.and_then(|profile| profile.max_output_bytes);
     let max_output_override = command.max_output_bytes.or(profile_output_limit);
     let native_fix = command.fix;
+    let code_actions = command.code_actions;
+    let fix_phases = FixPhases::new(native_fix, code_actions);
     let expected_codes = command.expected_codes;
     let fail_on_diagnostics = command.fail_on_diagnostics;
     let extra_args = utf8_extra_args(command.extra_args)?;
@@ -475,8 +480,14 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
         if !extra_args.is_empty() {
             return Err(AifixError::invalid_argument(auto_extra_args_message(config)).into());
         }
-        if native_fix {
-            run_auto_profile_with_native_fix(config, &cwd, max_diagnostics, max_output_override)
+        if native_fix || code_actions {
+            run_auto_profile_with_fixes(
+                config,
+                &cwd,
+                max_diagnostics,
+                max_output_override,
+                fix_phases,
+            )
         }
         else {
             run_auto_profile(config, &cwd, max_diagnostics, max_output_override)
@@ -505,24 +516,24 @@ fn run_batch(command: BatchCommand) -> Result<(), CliError>
             .or(config.default_protocol)
             .unwrap_or(Protocol::Auto);
 
-        match (profile_config, native_fix) {
-            | (Some(profile), true) => run_configured_profile_with_native_fix(
+        match profile_config {
+            | Some(profile) => run_configured_profile_with_fixes(
                 &profile_name,
                 profile,
                 &extra_args,
                 protocol,
                 &cwd,
                 limits,
+                fix_phases,
             )?,
-            | (Some(profile), false) => {
-                run_configured_profile(&profile_name, profile, &extra_args, protocol, &cwd, limits)?
-            },
-            | (None, true) => {
-                run_profile_with_native_fix(&profile_name, &extra_args, protocol, &cwd, limits)?
-            },
-            | (None, false) => {
-                run_profile_with_limits(&profile_name, &extra_args, protocol, &cwd, limits)?
-            },
+            | None => run_profile_with_fixes(
+                &profile_name,
+                &extra_args,
+                protocol,
+                &cwd,
+                limits,
+                fix_phases,
+            )?,
         }
     };
 

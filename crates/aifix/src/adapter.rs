@@ -1112,7 +1112,7 @@ fn parse_lsp_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 /// - fails: returns parser errors for missing/non-array diagnostics, blank
 ///   messages, malformed ranges, or reversed ranges.
 /// - panics: none.
-fn parse_lsp_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
+pub(crate) fn parse_lsp_value(value: &Value) -> Result<Vec<Diagnostic>, AifixError>
 {
     let fallback_uri = lsp_fallback_uri(value);
     let diagnostics_value = lsp_diagnostics_value(value)?;

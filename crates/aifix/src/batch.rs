@@ -14,6 +14,9 @@ use std::io::BufReader;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
 use std::process::ChildStderr;
@@ -34,6 +37,13 @@ use crate::config::Config;
 use crate::config::ProfileConfig;
 use crate::digest::build_digest;
 use crate::error::AifixError;
+use crate::lsp_fix::ResolvedCodeActionConfig;
+use crate::lsp_fix::apply_code_actions;
+use crate::lsp_fix::code_action_command_family;
+use crate::lsp_fix::has_code_action_support;
+use crate::lsp_fix::preflight_code_actions;
+use crate::lsp_fix::resolve_code_action_config;
+use crate::model::Diagnostic;
 use crate::model::Digest;
 use crate::model::Invocation;
 use crate::model::OutputFormat;
@@ -125,6 +135,9 @@ pub struct BatchProfileInfo
     /// Executable family for the native automatic-fix command, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_fix_command_family: Option<String>,
+    /// Executable family for the LSP code-action server, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_action_command_family: Option<String>,
     /// Whether the profile appears applicable to the supplied working
     /// directory.
     pub detected: bool,
@@ -279,6 +292,38 @@ pub fn render_profile_catalog(
     }
 }
 
+/// Mutating phases requested before the residual diagnostic invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixPhases
+{
+    /// Run the profile's native automatic-fix command.
+    native: bool,
+    /// Apply configured diagnostic-correlated LSP code actions.
+    code_actions: bool,
+}
+
+impl FixPhases
+{
+    /// Diagnostic-only execution with no mutation phase.
+    const NONE: Self = Self::new(false, false);
+    /// Native automatic fixes without LSP code actions.
+    const NATIVE_ONLY: Self = Self::new(true, false);
+
+    /// Construct the requested mutation phase set.
+    #[must_use]
+    #[inline]
+    pub const fn new(
+        native: bool,
+        code_actions: bool,
+    ) -> Self
+    {
+        Self {
+            native,
+            code_actions,
+        }
+    }
+}
+
 /// Run every detected defaultable profile and aggregate successful diagnostics.
 ///
 /// # Contract
@@ -300,7 +345,13 @@ pub fn run_auto_profile(
     max_output_override: Option<usize>,
 ) -> Digest
 {
-    run_auto_profile_mode(config, cwd, max_diagnostics, max_output_override, false)
+    run_auto_profile_mode(
+        config,
+        cwd,
+        max_diagnostics,
+        max_output_override,
+        FixPhases::NONE,
+    )
 }
 
 /// Run native automatic fixes for every fixable detected profile, then
@@ -325,7 +376,28 @@ pub fn run_auto_profile_with_native_fix(
     max_output_override: Option<usize>,
 ) -> Digest
 {
-    run_auto_profile_mode(config, cwd, max_diagnostics, max_output_override, true)
+    run_auto_profile_mode(
+        config,
+        cwd,
+        max_diagnostics,
+        max_output_override,
+        FixPhases::NATIVE_ONLY,
+    )
+}
+
+/// Run requested native fixes and LSP code actions before aggregating residual
+/// diagnostics for every detected profile.
+#[must_use]
+#[inline]
+pub fn run_auto_profile_with_fixes(
+    config: &Config,
+    cwd: &Utf8Path,
+    max_diagnostics: Option<usize>,
+    max_output_override: Option<usize>,
+    phases: FixPhases,
+) -> Digest
+{
+    run_auto_profile_mode(config, cwd, max_diagnostics, max_output_override, phases)
 }
 
 /// Shared auto-profile orchestration for diagnostic-only and native-fix runs.
@@ -334,7 +406,7 @@ fn run_auto_profile_mode(
     cwd: &Utf8Path,
     max_diagnostics: Option<usize>,
     max_output_override: Option<usize>,
-    native_fix: bool,
+    phases: FixPhases,
 ) -> Digest
 {
     let profiles = profile_catalog(config, cwd)
@@ -342,12 +414,29 @@ fn run_auto_profile_mode(
         .filter(|profile| profile.defaultable)
         .collect::<Vec<_>>();
     let mut phase_failures = Vec::with_capacity(profiles.len());
+    let mut lsp_residuals = vec![Vec::new(); profiles.len()];
     let mut statuses = Vec::new();
     let mut diagnostics = Vec::new();
 
     for profile in &profiles {
-        let preflight_failure = if native_fix && profile.detected {
-            run_auto_selected_preflight(config, profile)
+        let preflight_failure = if (phases.native || phases.code_actions) && profile.detected {
+            run_auto_selected_preflight(config, profile, cwd)
+                .and_then(|()| {
+                    if phases.native && auto_profile_has_native_fix(config, profile) {
+                        run_auto_selected_native_fix_preflight(config, profile, cwd)
+                    }
+                    else {
+                        Ok(())
+                    }
+                })
+                .and_then(|()| {
+                    if phases.code_actions && auto_profile_has_code_actions(config, profile) {
+                        run_auto_selected_code_action_preflight(config, profile, cwd)
+                    }
+                    else {
+                        Ok(())
+                    }
+                })
                 .err()
                 .map(|error| (classify_error(&error).to_owned(), error.to_string()))
         }
@@ -356,10 +445,44 @@ fn run_auto_profile_mode(
         };
         phase_failures.push(preflight_failure);
     }
+    if phases.code_actions && !phase_failures.iter().any(Option::is_some) {
+        let capable_profiles = profiles
+            .iter()
+            .filter(|profile| profile.detected && auto_profile_has_code_actions(config, profile))
+            .count();
+        if capable_profiles > 1 {
+            for (profile, phase_failure) in profiles.iter().zip(&mut phase_failures) {
+                if profile.detected
+                    && auto_profile_has_code_actions(config, profile)
+                    && phase_failure.is_none()
+                {
+                    *phase_failure = Some((
+                        "invalid_argument".to_owned(),
+                        "automatic code-action mutation requires exactly one detected capable profile"
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+    if phase_failures.iter().any(Option::is_some) {
+        for (profile, phase_failure) in profiles.iter().zip(&mut phase_failures) {
+            let participates = profile.detected
+                && ((phases.native && auto_profile_has_native_fix(config, profile))
+                    || (phases.code_actions && auto_profile_has_code_actions(config, profile)));
+            if participates && phase_failure.is_none() {
+                *phase_failure = Some((
+                    "invalid_argument".to_owned(),
+                    "mutation preflight aborted because another detected profile was invalid"
+                        .to_owned(),
+                ));
+            }
+        }
+    }
     for (profile, phase_failure) in profiles.iter().zip(&mut phase_failures) {
-        if native_fix
+        if phases.native
             && profile.detected
-            && profile.native_fix_command_family.is_some()
+            && auto_profile_has_native_fix(config, profile)
             && phase_failure.is_none()
         {
             *phase_failure =
@@ -368,8 +491,28 @@ fn run_auto_profile_mode(
                     .map(|error| (classify_error(&error).to_owned(), error.to_string()));
         }
     }
+    for ((profile, phase_failure), lsp_diagnostics) in profiles
+        .iter()
+        .zip(&mut phase_failures)
+        .zip(&mut lsp_residuals)
+    {
+        if phases.code_actions
+            && profile.detected
+            && auto_profile_has_code_actions(config, profile)
+            && phase_failure.is_none()
+        {
+            match run_auto_selected_code_actions(config, profile, cwd) {
+                | Ok(residual) => *lsp_diagnostics = residual,
+                | Err(error) => {
+                    *phase_failure = Some((classify_error(&error).to_owned(), error.to_string()));
+                },
+            }
+        }
+    }
 
-    for (profile, fix_failure) in profiles.into_iter().zip(phase_failures) {
+    for ((profile, fix_failure), lsp_diagnostics) in
+        profiles.into_iter().zip(phase_failures).zip(lsp_residuals)
+    {
         if !profile.detected {
             statuses.push(ProfileRunStatus {
                 profile: profile.name,
@@ -384,15 +527,13 @@ fn run_auto_profile_mode(
             continue;
         }
 
-        let reason = if native_fix && profile.native_fix_command_family.is_none() {
-            format!(
-                "{}; no native fix command, diagnostics only",
-                profile.detection_reason
-            )
+        let mut reason = profile.detection_reason.clone();
+        if phases.native && !auto_profile_has_native_fix(config, &profile) {
+            reason.push_str("; no native fix command, diagnostics only");
         }
-        else {
-            profile.detection_reason.clone()
-        };
+        if phases.code_actions && !auto_profile_has_code_actions(config, &profile) {
+            reason.push_str("; no LSP code-action command, diagnostics only");
+        }
         if let Some((error_kind, error)) = fix_failure {
             statuses.push(ProfileRunStatus {
                 profile: profile.name,
@@ -409,6 +550,7 @@ fn run_auto_profile_mode(
 
         match run_auto_selected_profile(config, &profile, cwd, max_output_override) {
             | Ok(digest) => {
+                let digest = merge_residual_diagnostics(digest, lsp_diagnostics, None);
                 let diagnostic_count = digest.counts.total;
                 diagnostics.extend(digest.diagnostics);
                 statuses.push(ProfileRunStatus {
@@ -442,8 +584,11 @@ fn run_auto_profile_mode(
         "batch".to_owned(),
         AUTO_PROFILE.to_owned(),
     ];
-    if native_fix {
+    if phases.native {
         command.push("--fix".to_owned());
+    }
+    if phases.code_actions {
+        command.push("--code-actions".to_owned());
     }
     let invocation = Invocation::with_cwd_path(command, cwd, String::new(), String::new(), None);
     let mut digest = build_digest(diagnostics, invocation, max_diagnostics);
@@ -559,7 +704,7 @@ pub fn run_profile_with_limits(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
-    run_profile_mode(profile, extra_args, protocol, cwd, limits, false)
+    run_profile_mode(profile, extra_args, protocol, cwd, limits, FixPhases::NONE)
 }
 
 /// Run a built-in profile's native automatic fix command, then return only the
@@ -585,7 +730,33 @@ pub fn run_profile_with_native_fix(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
-    run_profile_mode(profile, extra_args, protocol, cwd, limits, true)
+    run_profile_mode(
+        profile,
+        extra_args,
+        protocol,
+        cwd,
+        limits,
+        FixPhases::NATIVE_ONLY,
+    )
+}
+
+/// Run requested mutation phases for a built-in profile, then return residual
+/// tool and LSP diagnostics.
+///
+/// # Errors
+/// Returns an error when a requested capability is unavailable or any direct
+/// process, protocol, edit, or diagnostic phase fails.
+#[inline]
+pub fn run_profile_with_fixes(
+    profile: &str,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+    phases: FixPhases,
+) -> Result<Digest, AifixError>
+{
+    run_profile_mode(profile, extra_args, protocol, cwd, limits, phases)
 }
 
 /// Execute one built-in profile in diagnostic-only or native-fix mode.
@@ -595,27 +766,34 @@ fn run_profile_mode(
     protocol: Protocol,
     cwd: &Utf8Path,
     limits: BatchLimits,
-    native_fix: bool,
+    phases: FixPhases,
 ) -> Result<Digest, AifixError>
 {
     let argv = profile_command(profile, extra_args)?;
-    if native_fix {
-        run_profile_native_fix(profile, extra_args, protocol, cwd, limits)?;
+    let fix_argv = phases
+        .native
+        .then(|| profile_native_fix_command(profile, extra_args))
+        .transpose()?;
+    let code_action_config =
+        resolve_requested_code_action_config(profile, None, phases.code_actions)?;
+    preflight_direct_argv(&argv, cwd, "diagnostic")?;
+    if let Some(fix_argv) = fix_argv.as_ref() {
+        preflight_direct_argv(fix_argv, cwd, "native fix")?;
     }
-    run_argv(argv, protocol, cwd, limits)
-}
-
-/// Execute only one built-in profile's native fix phase.
-fn run_profile_native_fix(
-    profile: &str,
-    extra_args: &[String],
-    protocol: Protocol,
-    cwd: &Utf8Path,
-    limits: BatchLimits,
-) -> Result<(), AifixError>
-{
-    let fix_argv = profile_native_fix_command(profile, extra_args)?;
-    run_native_fix_argv(&fix_argv, protocol, cwd, limits)
+    if let Some(code_actions) = code_action_config.as_ref() {
+        preflight_code_actions(code_actions, cwd)?;
+    }
+    if let Some(fix_argv) = fix_argv {
+        run_native_fix_argv(&fix_argv, protocol, cwd, limits)?;
+    }
+    let lsp_diagnostics = code_action_config
+        .map_or_else(|| Ok(Vec::new()), |config| apply_code_actions(&config, cwd))?;
+    let digest = run_argv(argv, protocol, cwd, limits)?;
+    Ok(merge_residual_diagnostics(
+        digest,
+        lsp_diagnostics,
+        limits.max_diagnostics,
+    ))
 }
 
 /// Run an explicitly configured profile and cap digest samples per group.
@@ -642,7 +820,15 @@ pub fn run_configured_profile(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
-    run_configured_profile_mode(name, config, extra_args, protocol, cwd, limits, false)
+    run_configured_profile_mode(
+        name,
+        config,
+        extra_args,
+        protocol,
+        cwd,
+        limits,
+        FixPhases::NONE,
+    )
 }
 
 /// Run a configured profile's native automatic fix command, then return only
@@ -672,7 +858,35 @@ pub fn run_configured_profile_with_native_fix(
     limits: BatchLimits,
 ) -> Result<Digest, AifixError>
 {
-    run_configured_profile_mode(name, config, extra_args, protocol, cwd, limits, true)
+    run_configured_profile_mode(
+        name,
+        config,
+        extra_args,
+        protocol,
+        cwd,
+        limits,
+        FixPhases::NATIVE_ONLY,
+    )
+}
+
+/// Run requested mutation phases for a configured profile, then return
+/// residual tool and LSP diagnostics.
+///
+/// # Errors
+/// Returns an error when command resolution, a requested capability, process
+/// execution, workspace editing, or residual parsing fails.
+#[inline]
+pub fn run_configured_profile_with_fixes(
+    name: &str,
+    config: &ProfileConfig,
+    extra_args: &[String],
+    protocol: Protocol,
+    cwd: &Utf8Path,
+    limits: BatchLimits,
+    phases: FixPhases,
+) -> Result<Digest, AifixError>
+{
+    run_configured_profile_mode(name, config, extra_args, protocol, cwd, limits, phases)
 }
 
 /// Execute one configured profile in diagnostic-only or native-fix mode.
@@ -683,14 +897,74 @@ fn run_configured_profile_mode(
     protocol: Protocol,
     cwd: &Utf8Path,
     limits: BatchLimits,
-    native_fix: bool,
+    phases: FixPhases,
 ) -> Result<Digest, AifixError>
 {
     let argv = configured_profile_command(name, config, extra_args)?;
-    if native_fix {
-        run_configured_native_fix(name, config, extra_args, protocol, cwd, limits)?;
+    let fix_argv = phases
+        .native
+        .then(|| configured_native_fix_command(name, config, extra_args))
+        .transpose()?;
+    let code_action_config =
+        resolve_requested_code_action_config(name, Some(config), phases.code_actions)?;
+    preflight_direct_argv(&argv, cwd, "diagnostic")?;
+    if let Some(fix_argv) = fix_argv.as_ref() {
+        preflight_direct_argv(fix_argv, cwd, "native fix")?;
     }
-    run_argv(argv, protocol, cwd, limits)
+    if let Some(code_actions) = code_action_config.as_ref() {
+        preflight_code_actions(code_actions, cwd)?;
+    }
+    if let Some(fix_argv) = fix_argv {
+        let fix_protocol = config.fix_protocol.unwrap_or(protocol);
+        run_native_fix_argv(&fix_argv, fix_protocol, cwd, limits)?;
+    }
+    let lsp_diagnostics = code_action_config.map_or_else(
+        || Ok(Vec::new()),
+        |resolved| apply_code_actions(&resolved, cwd),
+    )?;
+    let digest = run_argv(argv, protocol, cwd, limits)?;
+    Ok(merge_residual_diagnostics(
+        digest,
+        lsp_diagnostics,
+        limits.max_diagnostics,
+    ))
+}
+
+/// Resolve an explicitly requested LSP code-action mutation phase.
+fn resolve_requested_code_action_config(
+    profile_name: &str,
+    profile: Option<&ProfileConfig>,
+    enabled: bool,
+) -> Result<Option<ResolvedCodeActionConfig>, AifixError>
+{
+    if !enabled {
+        return Ok(None);
+    }
+    resolve_code_action_config(profile_name, profile)?
+        .map(Some)
+        .ok_or_else(|| {
+            AifixError::invalid_argument(format!(
+                "profile `{profile_name}` has no LSP code-action command; configure \
+                 `code_actions.argv`"
+            ))
+        })
+}
+
+/// Combine final LSP publications with the ordinary residual diagnostic pass.
+fn merge_residual_diagnostics(
+    digest: Digest,
+    lsp_diagnostics: Vec<Diagnostic>,
+    max_diagnostics: Option<usize>,
+) -> Digest
+{
+    if lsp_diagnostics.is_empty() {
+        return digest;
+    }
+    let mut diagnostics = digest.diagnostics;
+    diagnostics.extend(lsp_diagnostics);
+    let mut merged = build_digest(diagnostics, digest.invocation, max_diagnostics);
+    merged.profile_statuses = digest.profile_statuses;
+    merged
 }
 
 /// Resolve and validate one configured profile's diagnostic argv.
@@ -729,25 +1003,21 @@ fn configured_profile_command(
     }
 }
 
-/// Execute only one configured profile's native fix phase.
-fn run_configured_native_fix(
+/// Resolve only one configured profile's native fix argv.
+fn configured_native_fix_command(
     name: &str,
     config: &ProfileConfig,
     extra_args: &[String],
-    protocol: Protocol,
-    cwd: &Utf8Path,
-    limits: BatchLimits,
-) -> Result<(), AifixError>
+) -> Result<Vec<String>, AifixError>
 {
-    let fix_argv = if let Some(fix_argv) = config.fix_argv.as_ref().filter(|argv| !argv.is_empty())
-    {
-        fix_argv.clone()
-    }
-    else {
-        profile_native_fix_command(name, extra_args)?
-    };
-    let fix_protocol = config.fix_protocol.unwrap_or(protocol);
-    run_native_fix_argv(&fix_argv, fix_protocol, cwd, limits)
+    config
+        .fix_argv
+        .as_ref()
+        .filter(|argv| !argv.is_empty())
+        .map_or_else(
+            || profile_native_fix_command(name, extra_args),
+            |fix_argv| Ok(fix_argv.clone()),
+        )
 }
 
 /// Return the command argv for a built-in profile.
@@ -893,6 +1163,102 @@ fn run_argv(
     }
 }
 
+/// Validate that one direct-argv executable is available before any mutation.
+fn preflight_direct_argv(
+    argv: &[String],
+    cwd: &Utf8Path,
+    phase: &str,
+) -> Result<(), AifixError>
+{
+    let executable = argv.first().ok_or_else(|| {
+        AifixError::invalid_argument(format!("{phase} command requires an executable"))
+    })?;
+    if executable.is_empty() {
+        return Err(AifixError::invalid_argument(format!(
+            "{phase} command executable must not be empty"
+        )));
+    }
+    let executable_path = Path::new(executable);
+    let found = if executable_path.is_absolute() || executable_path.components().count() > 1 {
+        let candidate = if executable_path.is_absolute() {
+            executable_path.to_owned()
+        }
+        else {
+            cwd.join(executable).into_std_path_buf()
+        };
+        executable_file_available(&candidate)
+    }
+    else {
+        std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|directory| {
+                let directory = if directory.is_absolute() {
+                    directory
+                }
+                else {
+                    cwd.as_std_path().join(directory)
+                };
+                executable_candidates(&directory.join(executable))
+                    .into_iter()
+                    .any(|candidate| executable_file_available(&candidate))
+            })
+        })
+    };
+    if !found {
+        return Err(AifixError::invalid_argument(format!(
+            "{phase} executable `{executable}` was not available"
+        )));
+    }
+    Ok(())
+}
+
+/// Return platform executable candidates for one PATH entry.
+#[cfg(not(windows))]
+fn executable_candidates(path: &Path) -> Vec<PathBuf>
+{
+    vec![path.to_owned()]
+}
+
+/// Return Windows PATHEXT candidates for one PATH entry.
+#[cfg(windows)]
+fn executable_candidates(path: &Path) -> Vec<PathBuf>
+{
+    if path.extension().is_some() {
+        return vec![path.to_owned()];
+    }
+    let extensions = std::env::var_os("PATHEXT")
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_owned());
+    extensions
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| {
+            let mut candidate = path.as_os_str().to_owned();
+            candidate.push(extension);
+            PathBuf::from(candidate)
+        })
+        .collect()
+}
+
+/// Return whether a path is an executable regular file.
+fn executable_file_available(path: &Path) -> bool
+{
+    let Ok(metadata) = fs::metadata(path)
+    else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        return metadata.permissions().mode() & 0o111 != 0;
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Execute a native fix argv and accept nonzero exits only when an explicit
 /// non-automatic protocol parses diagnostics for the subsequent pass.
 fn run_native_fix_argv(
@@ -1008,6 +1374,7 @@ fn built_in_profile_info(
         extra_args: !matches!(name, AUTO_PROFILE),
         native_fix_command_family: matches!(name, RUST_PROFILE)
             .then(|| RUST_COMMAND_FAMILY.to_owned()),
+        code_action_command_family: code_action_command_family(name, None),
         detected,
         detection_reason,
     }
@@ -1055,6 +1422,10 @@ fn configured_profile_info(
             .and_then(|argv| argv.first())
             .cloned()
             .or_else(|| matches!(name, RUST_PROFILE).then(|| RUST_COMMAND_FAMILY.to_owned())),
+        code_action_command_family: code_action_command_family(name, Some(profile)).or_else(|| {
+            has_code_action_support(name, Some(profile))
+                .then(|| "<invalid code-action configuration>".to_owned())
+        }),
         detected,
         detection_reason,
     }
@@ -1085,16 +1456,96 @@ fn run_auto_selected_profile(
     )
 }
 
+/// Return whether an auto-selected profile declares a native mutation phase.
+fn auto_profile_has_native_fix(
+    config: &Config,
+    profile: &BatchProfileInfo,
+) -> bool
+{
+    matches!(profile.name.as_str(), RUST_PROFILE)
+        || config
+            .profiles
+            .get(&profile.name)
+            .is_some_and(|configured| configured.fix_argv.is_some())
+}
+
+/// Return whether an auto-selected profile declares an LSP mutation phase.
+fn auto_profile_has_code_actions(
+    config: &Config,
+    profile: &BatchProfileInfo,
+) -> bool
+{
+    has_code_action_support(&profile.name, config.profiles.get(&profile.name))
+}
+
 /// Validate one auto-selected diagnostic command without executing it.
 fn run_auto_selected_preflight(
     config: &Config,
     profile: &BatchProfileInfo,
+    cwd: &Utf8Path,
 ) -> Result<(), AifixError>
 {
-    config.profiles.get(&profile.name).map_or_else(
-        || profile_command(&profile.name, &[]).map(drop),
-        |configured| configured_profile_command(&profile.name, configured, &[]).map(drop),
-    )
+    let argv = config.profiles.get(&profile.name).map_or_else(
+        || profile_command(&profile.name, &[]),
+        |configured| configured_profile_command(&profile.name, configured, &[]),
+    )?;
+    preflight_direct_argv(&argv, cwd, "diagnostic")
+}
+
+/// Validate one auto-selected native-fix command without executing it.
+fn run_auto_selected_native_fix_preflight(
+    config: &Config,
+    profile: &BatchProfileInfo,
+    cwd: &Utf8Path,
+) -> Result<(), AifixError>
+{
+    let argv = config.profiles.get(&profile.name).map_or_else(
+        || profile_native_fix_command(&profile.name, &[]),
+        |configured| {
+            configured
+                .fix_argv
+                .as_ref()
+                .filter(|argv| !argv.is_empty())
+                .cloned()
+                .map_or_else(|| profile_native_fix_command(&profile.name, &[]), Ok)
+        },
+    )?;
+    preflight_direct_argv(&argv, cwd, "native fix")
+}
+
+/// Validate one auto-selected code-action configuration without mutation.
+fn run_auto_selected_code_action_preflight(
+    config: &Config,
+    profile: &BatchProfileInfo,
+    cwd: &Utf8Path,
+) -> Result<(), AifixError>
+{
+    let configured = config.profiles.get(&profile.name);
+    let resolved = resolve_code_action_config(&profile.name, configured)?.ok_or_else(|| {
+        AifixError::invalid_argument(format!(
+            "profile `{}` has no LSP code-action command",
+            profile.name
+        ))
+    })?;
+    preflight_code_actions(&resolved, cwd)
+}
+
+/// Run one auto-selected LSP code-action phase.
+fn run_auto_selected_code_actions(
+    config: &Config,
+    profile: &BatchProfileInfo,
+    cwd: &Utf8Path,
+) -> Result<Vec<Diagnostic>, AifixError>
+{
+    let configured = config.profiles.get(&profile.name);
+    let code_action_config =
+        resolve_code_action_config(&profile.name, configured)?.ok_or_else(|| {
+            AifixError::invalid_argument(format!(
+                "profile `{}` has no LSP code-action command",
+                profile.name
+            ))
+        })?;
+    apply_code_actions(&code_action_config, cwd)
 }
 
 /// Run only one auto-selected profile's native fix phase.
@@ -1108,17 +1559,15 @@ fn run_auto_selected_native_fix(
     let configured = config.profiles.get(&profile.name);
     let limits = auto_profile_limits(config, configured, max_output_override);
     configured.map_or_else(
-        || run_profile_native_fix(&profile.name, &[], profile.protocol, cwd, limits),
+        || {
+            let fix_argv = profile_native_fix_command(&profile.name, &[])?;
+            run_native_fix_argv(&fix_argv, profile.protocol, cwd, limits)
+        },
         |configured| {
             configured_profile_command(&profile.name, configured, &[]).map(drop)?;
-            run_configured_native_fix(
-                &profile.name,
-                configured,
-                &[],
-                profile.protocol,
-                cwd,
-                limits,
-            )
+            let fix_argv = configured_native_fix_command(&profile.name, configured, &[])?;
+            let fix_protocol = configured.fix_protocol.unwrap_or(profile.protocol);
+            run_native_fix_argv(&fix_argv, fix_protocol, cwd, limits)
         },
     )
 }
@@ -1165,6 +1614,13 @@ fn render_profile_catalog_markdown(profiles: &[BatchProfileInfo]) -> String
         markdown.push_str(
             profile
                 .native_fix_command_family
+                .as_deref()
+                .unwrap_or("none"),
+        );
+        markdown.push_str(", LSP code-action command family ");
+        markdown.push_str(
+            profile
+                .code_action_command_family
                 .as_deref()
                 .unwrap_or("none"),
         );

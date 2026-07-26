@@ -39,6 +39,17 @@ fix_argv = [
 protocol = "clippy-json"
 fix_protocol = "clippy-json"
 
+[profiles.rust.code_actions]
+argv = ["rust-analyzer"]
+language_id = "rust"
+extensions = ["rs"]
+action_kinds = ["quickfix"]
+# Command-backed actions stay disabled until exact server-advertised identifiers
+# are explicitly trusted. Each command may submit at most one validated edit.
+allowed_commands = []
+max_iterations = 64
+timeout_ms = 30000
+
 [profiles.typescript]
 argv = ["tsc", "--noEmit", "--pretty", "false"]
 protocol = "typescript-text"

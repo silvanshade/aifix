@@ -3,10 +3,11 @@
 ## current
 
 * Keep crate-local docs aligned with observable `crates/aifix` source, tests, benchmarks, and fuzz hooks as the CLI evolves.
-* Keep `aifix` focused on diagnostic ingestion, digest construction, local explanation, explicit profile-owned native fixes, batch invocation capture, typed errors, rendering, configuration, and shell completion generation.
+* Keep `aifix` focused on diagnostic ingestion, digest construction, local explanation, explicit profile-owned native fixes, bounded LSP code actions, batch invocation capture, typed errors, rendering, configuration, and shell completion generation.
 * Preserve root `AGENTS.md` as repository guidance; crate docs should add crate-local facts rather than replace repository policy.
 * Treat current review hardening as implemented behavior: direct argv execution, strict UTF-8 extra args, bounded per-stream capture, structured auto rejection, adapter field validation, and raw-excluding digest dedupe.
 * Treat explicit native-fix orchestration as implemented behavior: supported profiles run direct argv before a fresh residual diagnostic pass, while ordinary batch and pipeline runs remain non-mutating.
+* Treat explicit LSP code-action orchestration as implemented behavior: only deterministic diagnostic-correlated actions within configured kinds and exact command allowlists may mutate opened in-root files before the residual diagnostic pass, and each command may submit at most one validated workspace edit.
 
 ## designed direction
 
@@ -23,4 +24,4 @@
 
 * No accepted latency, output-size, or diagnostic-count budgets exist yet.
 * No fuzz corpus policy or runtime target exists yet.
-* No policy exists for when suggestions can be considered machine-applicable.
+* No policy exists for applying suggestions parsed directly from diagnostic payloads.

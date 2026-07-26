@@ -71,6 +71,44 @@ pub struct Config
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
 
+/// LSP code-action settings for one batch profile.
+///
+/// Every field is optional so layered configuration can override one setting
+/// without repeating the complete server contract.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CodeActionConfig
+{
+    /// Whether this profile participates in LSP code-action mutation.
+    ///
+    /// Set `false` in a higher-precedence layer to clear inherited support.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Language-server executable and arguments, using direct argv execution.
+    #[serde(default, alias = "command")]
+    pub argv: Option<Vec<String>>,
+    /// LSP language identifier sent with opened source documents.
+    #[serde(default)]
+    pub language_id: Option<String>,
+    /// Source-file extensions opened in the LSP session, without leading dots.
+    #[serde(default)]
+    pub extensions: Option<Vec<String>>,
+    /// Code-action kinds eligible for automatic application.
+    #[serde(default)]
+    pub action_kinds: Option<Vec<String>>,
+    /// Server command identifiers eligible for automatic execution.
+    ///
+    /// Commands are denied unless explicitly listed.
+    #[serde(default)]
+    pub allowed_commands: Option<Vec<String>>,
+    /// Maximum mutation and diagnostic-refresh iterations.
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
+    /// Overall timeout for one LSP request or diagnostic refresh.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
 /// Command configuration for one batch profile.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -93,6 +131,9 @@ pub struct ProfileConfig
     /// Defaults to the profile's diagnostic protocol.
     #[serde(default)]
     pub fix_protocol: Option<Protocol>,
+    /// Optional LSP code-action settings for this profile.
+    #[serde(default, alias = "code-actions")]
+    pub code_actions: Option<CodeActionConfig>,
     /// Renderer used for this profile when not specified on CLI.
     #[serde(default)]
     pub format: Option<OutputFormat>,
@@ -254,6 +295,14 @@ impl ProfileConfig
         if other.fix_protocol.is_some() {
             self.fix_protocol = other.fix_protocol;
         }
+        if let Some(other_code_actions) = other.code_actions {
+            if let Some(code_actions) = self.code_actions.as_mut() {
+                code_actions.merge(other_code_actions);
+            }
+            else {
+                self.code_actions = Some(other_code_actions);
+            }
+        }
         if other.format.is_some() {
             self.format = other.format;
         }
@@ -265,6 +314,42 @@ impl ProfileConfig
         }
         if other.auto.is_some() {
             self.auto = other.auto;
+        }
+    }
+}
+
+/// Code-action-specific merge behavior.
+impl CodeActionConfig
+{
+    /// Merge explicitly present settings from `other`.
+    fn merge(
+        &mut self,
+        other: Self,
+    )
+    {
+        if other.enabled.is_some() {
+            self.enabled = other.enabled;
+        }
+        if other.argv.is_some() {
+            self.argv = other.argv;
+        }
+        if other.language_id.is_some() {
+            self.language_id = other.language_id;
+        }
+        if other.extensions.is_some() {
+            self.extensions = other.extensions;
+        }
+        if other.action_kinds.is_some() {
+            self.action_kinds = other.action_kinds;
+        }
+        if other.allowed_commands.is_some() {
+            self.allowed_commands = other.allowed_commands;
+        }
+        if other.max_iterations.is_some() {
+            self.max_iterations = other.max_iterations;
+        }
+        if other.timeout_ms.is_some() {
+            self.timeout_ms = other.timeout_ms;
         }
     }
 }

@@ -47,6 +47,7 @@ pub mod digest;
 pub mod error;
 /// Deterministic explanation metadata for diagnostic groups.
 pub mod explain;
+mod lsp_fix;
 /// Newline-delimited stdio Model Context Protocol server.
 pub mod mcp;
 /// Normalized diagnostic data model.

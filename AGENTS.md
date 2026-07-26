@@ -32,6 +32,8 @@ Project parameters live in `.agents/conventions.toml` (`project = "aifix"`, Rust
 * **Batch execution**: preserve direct argv process execution in batch mode.
   Never route tool commands through a shell.
   A nonzero native-fix exit requires at least one diagnostic parsed by an explicit non-automatic protocol; signal termination is always an operational failure.
+* **LSP mutation safety**: code-action mode is explicit, diagnostic-correlated, bounded, and profile-configured.
+  Never broaden automatic selection beyond deterministic allowed kinds, apply edits outside opened in-root documents, or execute server commands without an exact allowlist.
 * **Rust panic policy**: production paths return typed errors.
   Panics are unacceptable except for debug assertions of internal invariants or test-only failures.
 * **Rust contracts**: public and private nontrivial Rust items should carry useful rustdoc explaining contract, failure modes, and panic behavior.

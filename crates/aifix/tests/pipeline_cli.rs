@@ -489,6 +489,144 @@ mod tests
         })
     }
 
+    /// Compiles the deterministic stdio LSP fixture with the active Rust
+    /// toolchain and returns its executable path.
+    fn compile_fake_lsp(root: &Path) -> Result<PathBuf, Box<dyn Error>>
+    {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("fake_lsp.rs");
+        let executable = root.join(if cfg!(windows) {
+            "fake-lsp.exe"
+        }
+        else {
+            "fake-lsp"
+        });
+        let output = Command::new("rustc")
+            .args(["--edition", "2021"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .output()?;
+        require(output.status.success(), || {
+            format!(
+                "fake LSP fixture should compile; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })?;
+        Ok(executable)
+    }
+
+    /// Writes one configured diagnostic profile backed by the fake LSP.
+    fn write_fake_lsp_profile(
+        root: &Path,
+        executable: &Path,
+        mode: &str,
+        auto: bool,
+        allowed_commands: &[&str],
+    ) -> Result<(), Box<dyn Error>>
+    {
+        let executable = serde_json::to_string(path_to_str(executable)?)?;
+        let mode = serde_json::to_string(&format!("--mode={mode}"))?;
+        let allowed_commands = allowed_commands
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        fs::write(
+            root.join("aifix.toml"),
+            format!(
+                concat!(
+                    "[profiles.fake]\n",
+                    "argv = [\"printf\", \"tool.ts(1,1): error TS9000: tool residual\\n\"]\n",
+                    "protocol = \"typescript-text\"\n",
+                    "auto = {auto}\n",
+                    "\n",
+                    "[profiles.fake.code_actions]\n",
+                    "argv = [{executable}, {mode}]\n",
+                    "language_id = \"fake\"\n",
+                    "extensions = [\"fake\"]\n",
+                    "action_kinds = [\"quickfix\"]\n",
+                    "allowed_commands = [{allowed_commands}]\n",
+                    "max_iterations = 4\n",
+                    "timeout_ms = 5000\n"
+                ),
+                auto = auto,
+                executable = executable,
+                mode = mode,
+                allowed_commands = allowed_commands,
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// Run one isolated fake-LSP code-action case and return its source path.
+    fn run_fake_lsp_case(
+        name: &str,
+        mode: &str,
+        initial_source: &str,
+        timeout_ms: u64,
+    ) -> Result<(Output, PathBuf), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir(name)?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, initial_source)?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, mode, false, &[])?;
+        if timeout_ms != 5000 {
+            let path = cwd.join("aifix.toml");
+            let config = fs::read_to_string(&path)?;
+            fs::write(
+                path,
+                config.replace("timeout_ms = 5000", &format!("timeout_ms = {timeout_ms}")),
+            )?;
+        }
+        let xdg_home = create_temp_dir(&format!("{name}-xdg"))?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        Ok((output, source))
+    }
+
+    /// Run one fake-LSP case with the fixture's safe command allowlisted.
+    fn run_fake_lsp_command_case(
+        name: &str,
+        mode: &str,
+    ) -> Result<(Output, PathBuf), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir(name)?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "COMMAND_BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, mode, false, &["fake.apply"])?;
+        let xdg_home = create_temp_dir(&format!("{name}-xdg"))?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        Ok((output, source))
+    }
+
     /// Converts successful command output into a UTF-8 string.
     ///
     /// # Contract
@@ -896,10 +1034,22 @@ mod tests
             || format!("built-in Rust profile should advertise native fix support: {rust}"),
         )?;
         require(
+            rust.get("code_action_command_family")
+                .and_then(Value::as_str)
+                == Some("rust-analyzer"),
+            || format!("built-in Rust profile should advertise code-action support: {rust}"),
+        )?;
+        require(
             profile_named(&catalog, "typescript")?
                 .get("native_fix_command_family")
                 .is_none(),
             || format!("TypeScript profile should not invent native fix support: {catalog}"),
+        )?;
+        require(
+            profile_named(&catalog, "typescript")?
+                .get("code_action_command_family")
+                .is_none(),
+            || format!("TypeScript profile should not invent code-action support: {catalog}"),
         )?;
         require(
             profile_named(&catalog, "custom-fixer")?
@@ -911,8 +1061,8 @@ mod tests
         Ok(())
     }
 
-    /// Verifies project profile fields can explicitly clear a user-level fix
-    /// command and disable user-level automatic participation.
+    /// Verifies project profile fields can explicitly clear user-level fix
+    /// participation and override nested LSP settings.
     #[test]
     fn project_config_clears_user_fix_argv_and_auto_true() -> Result<(), Box<dyn Error>>
     {
@@ -927,7 +1077,12 @@ mod tests
                 "argv = [\"rustc\", \"--version\"]\n",
                 "fix_argv = [\"rustc\", \"--version\"]\n",
                 "protocol = \"nushell-text\"\n",
-                "auto = true\n"
+                "auto = true\n",
+                "\n",
+                "[profiles.layered.code_actions]\n",
+                "argv = [\"user-lsp\"]\n",
+                "language_id = \"fake\"\n",
+                "extensions = [\"fake\"]\n"
             ),
         )?;
         fs::write(
@@ -937,7 +1092,10 @@ mod tests
                 "argv = [\"printf\", \"sample.ts(1,1): error TS1000: residual\\n\"]\n",
                 "fix_argv = []\n",
                 "protocol = \"typescript-text\"\n",
-                "auto = false\n"
+                "auto = false\n",
+                "\n",
+                "[profiles.layered.code_actions]\n",
+                "argv = [\"project-lsp\"]\n"
             ),
         )?;
         let catalog_output = run_aifix_with_isolated_config(
@@ -956,8 +1114,11 @@ mod tests
         require(
             layered.get("command_family").and_then(Value::as_str) == Some("printf")
                 && layered.get("protocol").and_then(Value::as_str) == Some("typescript-text")
-                && layered.get("detected").and_then(Value::as_bool) == Some(false)
-                && layered.get("native_fix_command_family").is_none(),
+                && layered.get("native_fix_command_family").is_none()
+                && layered
+                    .get("code_action_command_family")
+                    .and_then(Value::as_str)
+                    == Some("project-lsp"),
             || format!("project profile should override explicit user fields: {layered}"),
         )?;
 
@@ -974,6 +1135,50 @@ mod tests
         let stderr = unsuccessful_stderr(fix_output)?;
         require(stderr.contains("no native fix command"), || {
             format!("cleared user fix argv should not execute: {stderr}")
+        })
+    }
+
+    /// Verifies a higher-precedence nested setting can disable inherited
+    /// built-in Rust code-action participation.
+    #[test]
+    fn project_config_disables_inherited_rust_code_actions() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("project-disables-rust-code-actions")?;
+        write_minimal_cargo_package(&cwd)?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            "[profiles.rust.code_actions]\nenabled = false\n",
+        )?;
+        let xdg_home = create_temp_dir("project-disables-rust-code-actions-xdg")?;
+        let catalog = successful_json(run_aifix_with_isolated_config(
+            [
+                OsStr::new("config"),
+                OsStr::new("profiles"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("json"),
+            ],
+            &xdg_home,
+        )?)?;
+        let rust = profile_named(&catalog, "rust")?;
+        require(rust.get("code_action_command_family").is_none(), || {
+            format!("disabled Rust code actions should not be advertised: {rust}")
+        })?;
+
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("rust"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(stderr.contains("no LSP code-action command"), || {
+            format!("disabled Rust code actions should fail explicitly: {stderr}")
         })
     }
 
@@ -2413,6 +2618,48 @@ diff --git a/src/main.rs b/src/main.rs
         })
     }
 
+    /// Verifies MCP code-action mode applies the same one-shot LSP repair
+    /// phase and returns only final residual diagnostics.
+    #[test]
+    fn mcp_batch_code_actions_apply_edits_and_return_residuals() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("mcp-code-actions")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "edit", false, &[])?;
+        let cwd_text = path_to_str(&cwd)?;
+        let xdg_home = create_temp_dir("mcp-code-actions-xdg")?;
+        let responses = run_mcp_with_isolated_config(
+            &[
+                mcp_initialize(1),
+                mcp_initialized_notification(),
+                mcp_tool_call(
+                    2,
+                    "aifix_batch",
+                    &json!({
+                        "profile": "fake",
+                        "cwd": cwd_text,
+                        "format": "compact-json",
+                        "codeActions": true
+                    }),
+                ),
+            ],
+            &xdg_home,
+        )?;
+        let text = mcp_tool_text(mcp_response_by_id(&responses, 2)?)?;
+        let digest: Value = serde_json::from_str(&text)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "F002")
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F001"),
+            || format!("MCP code actions should return final residuals: {digest}; {updated}"),
+        )
+    }
+
     /// Verifies the built-in Rust fix retains Cargo's missing-VCS safeguard.
     #[test]
     fn cli_batch_native_fix_rejects_missing_vcs_without_mutation() -> Result<(), Box<dyn Error>>
@@ -2943,6 +3190,1119 @@ diff --git a/src/main.rs b/src/main.rs
         let source = fs::read_to_string(cwd.join("src/lib.rs"))?;
         require(source.contains("vec!"), || {
             format!("later fixer should leave its mutation for residual diagnostics: {source}")
+        })
+    }
+
+    /// Verifies auto mode applies a preferred diagnostic edit, preserves an
+    /// unsafe command-backed residual, and combines final LSP/tool diagnostics.
+    #[test]
+    fn auto_batch_code_actions_apply_edits_and_return_residuals() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-code-actions-edit")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "edit", true, &[])?;
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(cwd.join("aifix.toml"))?;
+        config.write_all(
+            b"\n[profiles.unsupported]\nargv = [\"printf\", \"other.ts(1,1): error TS9001: unsupported residual\\n\"]\nprotocol = \"typescript-text\"\nauto = true\n",
+        )?;
+        drop(config);
+        let xdg_home = create_temp_dir("auto-code-actions-edit-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let status = profile_status_named(&digest, "fake")?;
+        let unsupported = profile_status_named(&digest, "unsupported")?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && status.get("state").and_then(Value::as_str) == Some("ran")
+                && json_contains_str(&digest, "F002")
+                && json_contains_str(&digest, "TS9000")
+                && json_contains_str(&digest, "TS9001")
+                && !json_contains_str(&digest, "F001")
+                && unsupported.get("state").and_then(Value::as_str) == Some("ran")
+                && unsupported
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.contains("no LSP code-action command")),
+            || format!("safe edits and residual diagnostics should converge: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies combined mode runs the native fixer before LSP actions, then
+    /// derives output from the final diagnostic invocation.
+    #[test]
+    fn cli_batch_combines_native_fix_then_code_actions() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-native-then-code-actions")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "NATIVE_BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "edit", false, &[])?;
+        let path = cwd.join("aifix.toml");
+        let config = fs::read_to_string(&path)?;
+        fs::write(
+            path,
+            config.replace(
+                "protocol = \"typescript-text\"",
+                "protocol = \"typescript-text\"\nfix_argv = [\"sh\", \"-c\", \"printf 'BAD\\\\n' > src/main.fake\"]",
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-native-then-code-actions-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--fix"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F001")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("combined mutation phases should converge in order: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies named combined mode validates the LSP phase before running an
+    /// otherwise valid native mutation.
+    #[test]
+    fn cli_batch_preflights_code_actions_before_native_mutation() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-before-native-preflight")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "NATIVE_BAD\n")?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.fake]\n",
+                "argv = [\"printf\", \"tool.ts(1,1): error TS9000: residual\\n\"]\n",
+                "fix_argv = [\"sh\", \"-c\", \"printf 'BAD\\\\n' > src/main.fake\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "\n",
+                "[profiles.fake.code_actions]\n",
+                "argv = []\n",
+                "language_id = \"fake\"\n",
+                "extensions = [\"fake\"]\n",
+                "action_kinds = [\"quickfix\"]\n"
+            ),
+        )?;
+        let xdg_home = create_temp_dir("cli-code-actions-before-native-preflight-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--fix"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "NATIVE_BAD\n" && stderr.contains("code_actions.argv"),
+            || format!("LSP preflight should precede native mutation: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies transient LSP content-modified responses are retried within the
+    /// same bounded request deadline.
+    #[test]
+    fn cli_batch_code_actions_retry_content_modified_response() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-retry")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "retry", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-retry-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F004"),
+            || format!("content-modified retry should converge: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies a server-selected incremental synchronization mode receives a
+    /// full-range content change and converges.
+    #[test]
+    fn cli_batch_code_actions_support_incremental_document_sync() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_case("cli-code-actions-incremental", "incremental", "BAD\n", 5000)?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F001")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("incremental synchronization should converge: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies diagnostics for an older document version cannot replace the
+    /// current publication after a mutation.
+    #[test]
+    fn cli_batch_code_actions_ignore_stale_diagnostic_publications() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-stale-publication",
+            "stale-publication",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F009")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("stale diagnostics should not restore a fixed finding: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies automatic mode validates every detected mutating profile before
+    /// allowing the first profile to change source.
+    #[test]
+    fn auto_batch_code_actions_preflight_all_profiles_before_mutation() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-code-actions-global-preflight")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "edit", true, &[])?;
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(cwd.join("aifix.toml"))?;
+        config.write_all(
+            b"\n[profiles.invalid]\nargv = [\"printf\", \"invalid.ts(1,1): error TS9002: residual\\n\"]\nprotocol = \"typescript-text\"\nauto = true\n\n[profiles.invalid.code_actions]\nargv = []\nlanguage_id = \"fake\"\nextensions = [\"fake\"]\naction_kinds = [\"quickfix\"]\n",
+        )?;
+        drop(config);
+        let xdg_home = create_temp_dir("auto-code-actions-global-preflight-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let fake = profile_status_named(&digest, "fake")?;
+        let invalid = profile_status_named(&digest, "invalid")?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && fake.get("state").and_then(Value::as_str) == Some("failed")
+                && invalid.get("state").and_then(Value::as_str) == Some("failed")
+                && json_contains_str(&digest, "mutation preflight aborted")
+                && json_contains_str(&digest, "code_actions.argv"),
+            || format!("global preflight should prevent partial mutation: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies automatic mode rejects multiple LSP mutators before either can
+    /// produce a stale cross-profile residual snapshot.
+    #[test]
+    fn auto_batch_code_actions_reject_multiple_mutating_profiles() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("auto-code-actions-multiple-mutators")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "edit", true, &[])?;
+        let executable = serde_json::to_string(path_to_str(&server)?)?;
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(cwd.join("aifix.toml"))?;
+        write!(
+            config,
+            concat!(
+                "\n[profiles.second]\n",
+                "argv = [\"printf\", \"second.ts(1,1): error TS9002: residual\\n\"]\n",
+                "protocol = \"typescript-text\"\n",
+                "auto = true\n",
+                "\n",
+                "[profiles.second.code_actions]\n",
+                "argv = [{executable}, \"--mode=edit\"]\n",
+                "language_id = \"fake\"\n",
+                "extensions = [\"fake\"]\n",
+                "action_kinds = [\"quickfix\"]\n",
+                "max_iterations = 4\n",
+                "timeout_ms = 5000\n"
+            ),
+            executable = executable,
+        )?;
+        drop(config);
+        let xdg_home = create_temp_dir("auto-code-actions-multiple-mutators-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("auto"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let fake = profile_status_named(&digest, "fake")?;
+        let second = profile_status_named(&digest, "second")?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && fake.get("state").and_then(Value::as_str) == Some("failed")
+                && second.get("state").and_then(Value::as_str) == Some("failed")
+                && json_contains_str(
+                    &digest,
+                    "automatic code-action mutation requires exactly one detected capable profile",
+                ),
+            || format!("multiple auto LSP mutators should fail preflight: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies resolution cannot change immutable selection metadata to
+    /// escape the configured action-kind allowlist.
+    #[test]
+    fn cli_batch_code_actions_reject_resolved_policy_escalation() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-resolve-escalate",
+            "resolve-escalate",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && json_contains_str(&digest, "F011")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("resolved policy escalation should remain residual: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies an external source mutation after synchronization is preserved
+    /// rather than overwritten by a stale automatic edit.
+    #[test]
+    fn cli_batch_code_actions_preserve_concurrent_source_change() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-external-change",
+            "external-change",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let current = fs::read_to_string(&source)?;
+        require(
+            current == "CONCURRENT\n" && json_contains_str(&digest, "F010"),
+            || format!("concurrent source change should survive: {digest}; {current}"),
+        )
+    }
+
+    /// Verifies a server that stops reading stdin cannot hold the CLI beyond
+    /// the configured request deadline.
+    #[test]
+    fn cli_batch_code_actions_bound_blocked_server_stdin() -> Result<(), Box<dyn Error>>
+    {
+        let started = std::time::Instant::now();
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-blocked-stdin",
+            "blocked-stdin",
+            "BAD\n",
+            100,
+        )?;
+        let elapsed = started.elapsed();
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && elapsed < core::time::Duration::from_secs(2)
+                && stderr.contains("timed out"),
+            || {
+                format!(
+                    "blocked server stdin should fail within its bound: {elapsed:?}; {stderr}; \
+                     {unchanged}"
+                )
+            },
+        )
+    }
+
+    /// Verifies one LSP action applies all validated file edits as a single
+    /// workspace transaction before residual diagnostics are collected.
+    #[test]
+    fn cli_batch_code_actions_apply_multi_file_workspace_edit() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-multi-file")?;
+        let source_dir = cwd.join("src");
+        fs::create_dir_all(&source_dir)?;
+        let main_source = source_dir.join("main.fake");
+        let auxiliary_source = source_dir.join("second.fake");
+        fs::write(&main_source, "BAD\n")?;
+        fs::write(&auxiliary_source, "AUX_BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "multi", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-multi-file-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let main_updated = fs::read_to_string(&main_source)?;
+        let auxiliary_updated = fs::read_to_string(&auxiliary_source)?;
+        require(
+            main_updated == "GOOD\n"
+                && auxiliary_updated == "AUX_GOOD\n"
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F013"),
+            || {
+                format!(
+                    "multi-file action should commit completely: {digest}; {main_updated}; \
+                     {auxiliary_updated}"
+                )
+            },
+        )
+    }
+
+    /// Verifies an edit whose synchronized didChange would exceed the message
+    /// bound is rejected before any staged source file is committed.
+    #[test]
+    fn cli_batch_code_actions_preflight_oversized_document_expansion() -> Result<(), Box<dyn Error>>
+    {
+        let initial_len = 16 * 1024 * 1024 - 64 * 1024;
+        let initial = format!("BAD{}", "a".repeat(initial_len - 3));
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-oversized-expansion",
+            "oversized-expansion",
+            &initial,
+            10_000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == initial && stderr.contains("outgoing LSP message exceeded"),
+            || {
+                format!(
+                    "oversized synchronized expansion should fail before commit: {}; {stderr}",
+                    unchanged.len()
+                )
+            },
+        )
+    }
+
+    /// Verifies an accepted unversioned replacement clears prior actionable
+    /// state for the same URI while remaining authoritative as a residual.
+    #[test]
+    fn cli_batch_code_actions_clear_actionable_state_on_unversioned_publication()
+    -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-unversioned-clear",
+            "unversioned-clear",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && !json_contains_str(&digest, "F029")
+                && !json_contains_str(&digest, "EVIL"),
+            || {
+                format!(
+                    "unversioned clear should remove old actionable state: {digest}; {unchanged}"
+                )
+            },
+        )
+    }
+
+    /// Verifies a current unversioned publication remains visible after a
+    /// synchronized mutation rather than being discarded as stale.
+    #[test]
+    fn cli_batch_code_actions_keep_unversioned_residual_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-unversioned-residual",
+            "unversioned-residual",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "F015")
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F014"),
+            || format!("unversioned residual should remain visible: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies a delayed unversioned diagnostic remains residual-only after
+    /// a current versioned publication and cannot drive an edit.
+    #[test]
+    fn cli_batch_code_actions_do_not_apply_delayed_unversioned_diagnostic()
+    -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-delayed-unversioned",
+            "delayed-unversioned",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "F019")
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F018")
+                && !json_contains_str(&digest, "EVIL"),
+            || format!("delayed unversioned diagnostics must not drive edits: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies a lone older versioned publication after a mutation cannot
+    /// become a residual or drive another action.
+    #[test]
+    fn cli_batch_code_actions_ignore_stale_only_publication() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_case("cli-code-actions-stale-only", "stale-only", "BAD\n", 5000)?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F021")
+                && !json_contains_str(&digest, "F022"),
+            || format!("older versioned publication should be ignored: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies diagnostics for a server-published document that was not
+    /// opened by the client are included in the final residual digest.
+    #[test]
+    fn cli_batch_code_actions_keep_unopened_residual_diagnostics() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-unopened-residual",
+            "unopened-residual",
+            "GOOD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "GOOD\n"
+                && json_contains_str(&digest, "F016")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("unopened residual should remain visible: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies unopened-document publications retain their highest version
+    /// rather than regressing to an older residual payload.
+    #[test]
+    fn cli_batch_code_actions_ignore_unopened_version_regression() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-unopened-regression",
+            "unopened-regression",
+            "GOOD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "GOOD\n"
+                && json_contains_str(&digest, "F023")
+                && !json_contains_str(&digest, "F024")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("unopened diagnostic version should not regress: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a response missing both result and error fails as malformed
+    /// JSON-RPC rather than being interpreted as a null success.
+    #[test]
+    fn cli_batch_code_actions_reject_malformed_response_envelope() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-malformed-response",
+            "malformed-response",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && stderr.contains("response must contain exactly one of result or error"),
+            || format!("malformed response should fail explicitly: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies malformed publishDiagnostics payloads fail instead of being
+    /// treated as an empty residual set.
+    #[test]
+    fn cli_batch_code_actions_reject_malformed_diagnostics_payload() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-malformed-diagnostics",
+            "malformed-diagnostics",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && stderr.contains("publishDiagnostics payload was not an array"),
+            || format!("malformed diagnostics should fail explicitly: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies malformed diagnostic items fail before code-action selection
+    /// even when the server would offer a unique edit for them.
+    #[test]
+    fn cli_batch_code_actions_reject_malformed_diagnostic_item() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-malformed-item",
+            "malformed-item",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(unchanged == "BAD\n" && stderr.contains("message"), || {
+            format!("malformed diagnostic item should not mutate: {stderr}; {unchanged}")
+        })
+    }
+
+    /// Verifies opaque diagnostic data participates in explicit action
+    /// correlation when visible diagnostic fields are otherwise identical.
+    #[test]
+    fn cli_batch_code_actions_correlate_full_diagnostic_data() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-same-visible-data",
+            "same-visible-data",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && json_contains_str(&digest, "F026")
+                && !json_contains_str(&digest, "EVIL"),
+            || {
+                format!(
+                    "opaque diagnostic data should prevent cross-correlation: {digest}; {unchanged}"
+                )
+            },
+        )
+    }
+
+    /// Verifies a server that explicitly declines code actions fails before
+    /// any source document is opened.
+    #[test]
+    fn cli_batch_code_actions_require_server_capability() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-provider-false",
+            "no-code-actions",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && stderr.contains("does not support code actions"),
+            || format!("false code-action provider should fail explicitly: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies the boolean-true codeActionProvider union form enables direct
+    /// actions without implying resolve support.
+    #[test]
+    fn cli_batch_code_actions_accept_boolean_server_capability() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-provider-true",
+            "boolean-code-actions",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && json_contains_str(&digest, "TS9000")
+                && !json_contains_str(&digest, "F001"),
+            || format!("boolean code-action provider should run: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies malformed server request identifiers fail closed before source
+    /// mutation.
+    #[test]
+    fn cli_batch_code_actions_reject_malformed_server_request_ids() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-malformed-request-id",
+            "malformed-request-id",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && stderr.contains("request id was not a string or integer"),
+            || format!("malformed server request id should fail closed: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies unsupported dynamic-registration requests receive an error
+    /// without breaking residual-diagnostic collection.
+    #[test]
+    fn cli_batch_code_actions_reject_dynamic_registration() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-registration-request",
+            "registration-request",
+            "BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && json_contains_str(&digest, "F017"),
+            || format!("unsupported registration should preserve residuals: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a terminal server failure rolls back every edit committed by
+    /// the one-shot automatic session.
+    #[test]
+    fn cli_batch_code_actions_rollback_on_shutdown_failure() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-shutdown-fail",
+            "shutdown-fail",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && stderr.contains("intentional shutdown failure"),
+            || format!("shutdown failure should roll back source edits: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies an options-form synchronization capability must explicitly
+    /// permit the didOpen/didClose lifecycle used by the client.
+    #[test]
+    fn cli_batch_code_actions_require_open_close_synchronization() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-open-close-disabled",
+            "open-close-disabled",
+            "BAD\n",
+            5000,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && stderr.contains("does not advertise document open/close synchronization"),
+            || format!("disabled open/close should fail explicitly: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a server notification flood remains bounded by the complete
+    /// LSP session deadline and cannot grow an unbounded client queue.
+    #[test]
+    fn cli_batch_code_actions_bound_server_notification_flood() -> Result<(), Box<dyn Error>>
+    {
+        let started = std::time::Instant::now();
+        let (output, source) = run_fake_lsp_case("cli-code-actions-flood", "flood", "BAD\n", 100)?;
+        let elapsed = started.elapsed();
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && elapsed < core::time::Duration::from_secs(2)
+                && stderr.contains("timed out"),
+            || {
+                format!(
+                    "notification flood should remain bounded: {elapsed:?}; {stderr}; {unchanged}"
+                )
+            },
+        )
+    }
+
+    /// Verifies actions with identical labels but competing edits remain
+    /// ambiguous instead of being collapsed into one automatic choice.
+    #[test]
+    fn cli_batch_code_actions_preserve_competing_same_label_actions() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-ambiguous")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "ambiguous", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-ambiguous-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && json_contains_str(&digest, "F005")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("competing actions should remain residual: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies versioned workspace edits cannot overwrite a newer open
+    /// document snapshot.
+    #[test]
+    fn cli_batch_code_actions_reject_stale_document_version() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-stale")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "stale", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-stale-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n" && stderr.contains("did not match open version"),
+            || format!("stale edit should fail without mutation: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a server cannot push a workspace edit outside execution of an
+    /// explicitly allowlisted action command.
+    #[test]
+    fn cli_batch_code_actions_reject_unsolicited_server_edit() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-unsolicited")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "BAD\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "unsolicited", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-unsolicited-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+                OsStr::new("--format"),
+                OsStr::new("compact-json"),
+            ],
+            &xdg_home,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "BAD\n"
+                && json_contains_str(&digest, "F007")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("unsolicited server edit should remain unapplied: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies an allowlisted command may apply one client-validated edit.
+    #[test]
+    fn cli_batch_code_actions_apply_allowlisted_command() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-config", "command")?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("allowlisted command should remove its diagnostic: {digest}; {updated}"),
+        )
+    }
+    /// Verifies an early execute-command response remains queued while its
+    /// nested workspace edit completes.
+    #[test]
+    fn cli_batch_code_actions_accept_early_command_response() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_command_case(
+            "cli-code-actions-command-early-response",
+            "command-early-response",
+        )?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || {
+                format!(
+                    "early command response should survive its nested edit: {digest}; {updated}"
+                )
+            },
+        )
+    }
+
+    /// Verifies the LSP Command union form is eligible when allowlisted.
+    #[test]
+    fn cli_batch_code_actions_apply_direct_command() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-direct", "command-direct")?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("direct command should remove its diagnostic: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies an edit-plus-command payload remains ineligible.
+    #[test]
+    fn cli_batch_code_actions_reject_mixed_edit_and_command() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-mixed", "command-mixed")?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "COMMAND_BAD\n"
+                && json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("mixed command action should remain residual: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a command-only action remains a residual diagnostic when no
+    /// unsafe command allowlist is configured.
+    #[test]
+    fn cli_batch_code_actions_leave_command_actions_residual() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_case(
+            "cli-code-actions-command-residual",
+            "command",
+            "COMMAND_BAD\n",
+            5000,
+        )?;
+        let digest = successful_json(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "COMMAND_BAD\n"
+                && json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("command action should remain residual: {digest}; {unchanged}"),
+        )
+    }
+
+    /// Verifies one command invocation cannot apply a second workspace edit.
+    #[test]
+    fn cli_batch_code_actions_bound_command_to_one_edit() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-double", "command-double")?;
+        let digest = successful_json(output)?;
+        let updated = fs::read_to_string(&source)?;
+        require(
+            updated == "GOOD\n"
+                && !json_contains_str(&digest, "F003")
+                && json_contains_str(&digest, "TS9000"),
+            || format!("second command edit should be rejected: {digest}; {updated}"),
+        )
+    }
+
+    /// Verifies an unsafe command edit fails without source mutation.
+    #[test]
+    fn cli_batch_code_actions_reject_stale_command_edit() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-stale", "command-stale")?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "COMMAND_BAD\n"
+                && stderr.contains("reported success without changing the workspace"),
+            || format!("stale command edit should fail without mutation: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a failed command rolls back its already-applied edit.
+    #[test]
+    fn cli_batch_code_actions_rollback_failed_command() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) =
+            run_fake_lsp_command_case("cli-code-actions-command-fail", "command-fail")?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "COMMAND_BAD\n" && stderr.contains("command failed after edit"),
+            || format!("failed command should roll back its edit: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies command support is negotiated before any source mutation.
+    #[test]
+    fn cli_batch_code_actions_require_allowlisted_command_capability() -> Result<(), Box<dyn Error>>
+    {
+        let (output, source) = run_fake_lsp_command_case(
+            "cli-code-actions-command-unadvertised",
+            "command-unadvertised",
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        let unchanged = fs::read_to_string(&source)?;
+        require(
+            unchanged == "COMMAND_BAD\n"
+                && stderr.contains("did not advertise allowlisted command `fake.apply`"),
+            || format!("unadvertised command should fail before mutation: {stderr}; {unchanged}"),
+        )
+    }
+
+    /// Verifies a diagnostic/action cycle is rejected as typed non-convergence.
+    #[test]
+    fn cli_batch_code_actions_reject_repeated_nonconverging_action() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-loop")?;
+        let source = cwd.join("src").join("main.fake");
+        fs::create_dir_all(source.parent().ok_or("fake source should have a parent")?)?;
+        fs::write(&source, "A\n")?;
+        let server = compile_fake_lsp(&cwd)?;
+        write_fake_lsp_profile(&cwd, &server, "loop", false, &[])?;
+        let xdg_home = create_temp_dir("cli-code-actions-loop-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("fake"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(
+            stderr.contains("repeated for an unchanged diagnostic"),
+            || format!("repeated action should fail with bounded recovery: {stderr}"),
+        )
+    }
+
+    /// Verifies an explicit code-action request fails before invoking a profile
+    /// that has no LSP server capability.
+    #[test]
+    fn cli_batch_code_actions_reject_unsupported_profile() -> Result<(), Box<dyn Error>>
+    {
+        let cwd = create_temp_dir("cli-code-actions-unsupported")?;
+        let xdg_home = create_temp_dir("cli-code-actions-unsupported-xdg")?;
+        let output = run_aifix_with_isolated_config(
+            [
+                OsStr::new("batch"),
+                OsStr::new("typescript"),
+                OsStr::new("--code-actions"),
+                OsStr::new("--cwd"),
+                cwd.as_os_str(),
+            ],
+            &xdg_home,
+        )?;
+        let stderr = unsuccessful_stderr(output)?;
+        require(stderr.contains("no LSP code-action command"), || {
+            format!("unsupported code-action request should fail explicitly: {stderr}")
         })
     }
 

@@ -30,6 +30,12 @@ jobs:
           persist-credentials: false
           submodules: 'true'
 
+      - &install-system-dependencies
+        name: install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libacl1-dev
+
       - &prepare-act-rustup-cache
         name: prepare act rustup cache mount
         if: ${{ env.ACT == 'true' }}
@@ -111,6 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *install-system-dependencies
       - *prepare-act-rustup-cache
       - *cache-rustup-toolchain
       - *install-rust-tools
@@ -185,6 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *install-system-dependencies
       - *prepare-act-rustup-cache
       - *cache-rustup-toolchain
       - *install-rust-tools
@@ -198,6 +206,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *install-system-dependencies
       - *prepare-act-rustup-cache
       - *cache-rustup-toolchain
       - *install-rust-tools
@@ -219,6 +228,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - *git-checkout
+      - *install-system-dependencies
       - *prepare-act-rustup-cache
       - *cache-rustup-toolchain
       - *install-rust-tools

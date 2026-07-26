@@ -40,7 +40,7 @@ Current CLI commands are:
 * `completions <shell>`: write a shell completion script.
 
 The MCP server is the primary agent surface.
-It advertises tools for pipeline digests, batch digests, project-local diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance.
+It advertises tools for pipeline digests, batch digests, batch profile discovery, project-local diagnostic dedupe, cached-fix reporting, cached-fix replay, and diagnostic-shape guidance; batch requests can opt into profile-native fixes or bounded LSP code actions.
 Tool failures are returned as MCP tool results so one bad diagnostic payload does not terminate the stdio session.
 Cached fix replay uses direct `git apply` argv with patch text on stdin; no shell mediates patch checks or application.
 
@@ -118,6 +118,15 @@ Native-fix mode adds one explicit mutating phase before diagnostic capture.
 Profiles own optional fix argv; configured `fix_argv` overrides built-in behavior and remains independent of diagnostic-only extra args.
 Successful fixes may emit arbitrary text, while nonzero fix output must parse under an explicit non-automatic `fix_protocol` or diagnostic protocol before the residual pass proceeds.
 The digest always comes from a fresh diagnostic invocation after the fix.
+
+LSP code-action mode is a separate explicit mutating phase after any native fix and before the final diagnostic invocation.
+The `lsp_fix` module owns one direct-argv language-server process, JSON-RPC framing, source discovery, push-diagnostic correlation, safe action selection, workspace edit validation, document synchronization, convergence, and shutdown.
+Only disabled-free actions in configured hierarchical kinds are eligible; an action must be the sole candidate or the sole preferred candidate for its diagnostic.
+Text edits must target opened files under the canonical workspace root, match any supplied document version, use valid non-overlapping UTF-16 ranges, and contain no resource operation.
+Command actions require an explicit per-profile command allowlist.
+Each applied action is followed by a bounded diagnostic settle interval; transient LSP `ContentModified` responses are retried within the same request deadline.
+The iteration cap, timeout, source-file cap, message-size cap, and bounded stderr capture turn protocol or convergence failures into typed errors.
+Final published LSP diagnostics are normalized through the existing adapter and combined with the fresh tool diagnostic pass.
 
 ## Configuration layering
 

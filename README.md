@@ -9,6 +9,12 @@ The project name is tentative.
 `aifix` has collision risk, including an existing PyPI name.
 Possible alternatives are `diagflow`, `lintrelay`, `fixroute`, and `signalfix`; they are suggestions only until the project is renamed or published.
 
+## Build prerequisites
+
+Compiling `aifix` on Linux requires the development package for POSIX ACLs.
+On Debian and Ubuntu, install it with `apt-get install libacl1-dev`.
+The ACL support preserves source access controls during transactional LSP workspace edits.
+
 ## Modes
 
 ### Pipeline mode
@@ -31,6 +37,7 @@ aifix batch --format compact-json
 aifix batch auto --format markdown
 aifix batch rust --format compact-json -- -W clippy::pedantic
 aifix batch rust --fix --format compact-json
+aifix batch rust --code-actions --format compact-json
 aifix batch agda --protocol agda-text -- -i src src/Main.agda
 aifix batch custom --protocol nushell-text -- nu-lint scripts/check.nu
 ```
@@ -49,6 +56,18 @@ A nonzero tool exit can still produce a digest when diagnostics are parseable; u
 The built-in Rust profile uses `cargo clippy --fix --allow-dirty`, intentionally permitting unstaged and staged changes while retaining Cargo's missing-VCS safeguard.
 Configured profiles can provide direct-argv `fix_argv`.
 Named profiles without a fix command fail explicitly; `auto --fix` fixes supported profiles and runs unsupported profiles diagnostically.
+`--code-actions` opens a profile-owned language server, requests diagnostic-correlated actions, applies only a unique configured automatic action, then runs the ordinary diagnostic command and combines both residual sources.
+When both mutation phases are requested, aifix validates every requested capability before changing files, runs the native fixer first, then runs LSP actions against the updated workspace.
+The Rust built-in defaults to `rust-analyzer`; configured profiles provide a complete server `argv`, language ID, source extensions, allowed action kinds, exact command allowlist, iteration cap, and timeout under `[profiles.<name>.code_actions]`.
+Direct edits and exact allowlisted action commands are eligible.
+An allowlisted command must be advertised by the server and may submit at most one `workspace/applyEdit` request; unsolicited, repeated, malformed, or unsafe requests receive `applied: false`.
+Workspace edits are limited to synchronized opened files inside the selected root, require current document versions when supplied, reject resource operations or confirmation-required annotations, and preserve source-owned ACLs and extended attributes.
+After all changed files validate and stage, Linux and macOS replacements use atomic exchange: aifix validates the displaced target inode, restores it if a concurrent save won the race, and retains the displaced file when safe restoration cannot be proved.
+Platforms without atomic file exchange reject code-action mutation during preflight.
+The profile author trusts each allowlisted command not to mutate files or launch side effects outside `workspace/applyEdit`; aifix cannot mediate hidden effects performed directly by the language-server process.
+On macOS, the operating system may add its managed `com.apple.provenance` attribute to a staged replacement; no other staging-only attribute is accepted.
+Named profiles without code-action support fail explicitly.
+`auto --code-actions` mutates only when exactly one detected profile supports code actions, rejects multiple capable mutators before any mutation, and runs unsupported profiles diagnostically.
 
 ### MCP mode
 
@@ -62,6 +81,7 @@ The server advertises tools for pipeline and batch digests, batch profile discov
 `aifix_batch_profiles` lists `auto`, built-ins, `custom`, and configured profiles with detection metadata.
 `aifix_batch` accepts an omitted or empty `profile` as `auto`, and unknown profiles return structured recovery data for choosing a valid profile.
 Set MCP `aifix_batch` argument `fix` to `true` only when the caller intends to mutate the workspace before receiving residual diagnostics.
+Set MCP `aifix_batch` argument `codeActions` to `true` only when the caller intends to apply bounded, diagnostic-correlated LSP actions before receiving residual diagnostics.
 Project-local cache state is stored in `.aifix/diagnostics.json`.
 Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
 
@@ -73,6 +93,7 @@ Cached fix replay feeds stored patches to `git apply` through direct argv and st
 * Use a named batch profile when the run is intentionally profile-specific.
 * Pass batch extra arguments only to named profiles; `auto` rejects them because they are profile-specific.
 * Set batch `fix` to `true` only for an explicit mutating run; the result contains diagnostics from the post-fix pass.
+* Set batch `codeActions` to `true` only for an explicit mutating LSP run; unsafe, ambiguous, disabled, stale, or unallowlisted actions remain unapplied.
 * Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
 * Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
 * `aifix` normalizes diagnostics and does not invent fixes.

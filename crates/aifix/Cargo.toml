@@ -42,5 +42,10 @@ tree-sitter-rust.workspace = true
 criterion.workspace = true
 proptest.workspace = true
 
+[target."cfg(unix)".dependencies]
+exacl.workspace = true
+rustix.workspace = true
+xattr.workspace = true
+
 [lints]
 workspace = true

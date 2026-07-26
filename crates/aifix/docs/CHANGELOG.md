@@ -38,6 +38,12 @@
 * Batch `--fix` and MCP `fix: true` now run profile-owned native automatic fixes before a fresh residual diagnostic pass.
 * The Rust profile supplies `cargo clippy --fix --allow-dirty`; configured profiles may declare complete direct-argv `fix_argv`, select a distinct non-automatic `fix_protocol` for nonzero output, and advertise the fix command family through profile discovery.
 * Named unsupported fix requests fail with configuration recovery, while automatic runs keep unsupported profiles diagnostic-only.
+* Batch `--code-actions` and MCP `codeActions: true` now run a bounded profile-owned stdio LSP session before the final diagnostic invocation.
+* The Rust profile defaults to `rust-analyzer`; configured profiles may declare server argv, language ID, source extensions, action kinds, exact command allowlists, iteration caps, and timeouts.
+* Automatic code-action mode permits exactly one detected capable mutator and fails preflight before source changes when multiple profiles could mutate.
+* Automatic action selection requires one eligible action or one eligible preferred action per diagnostic.
+  Direct edits use transactional validation; allowlisted, server-advertised commands may submit one edit through the same path, while out-of-scope or unsafe server edit requests are rejected.
+  Multi-file changes stage completely before replacement with rollback on partial failure, current unversioned and unopened-document residuals remain visible, complete session time and server traffic are bounded, stale publications and source changes cannot drive edits, and unsafe edit forms are rejected.
 
 ### Integration coverage
 
@@ -53,8 +59,10 @@
   + non-file project config rejection;
   + native Clippy mutation for clean and staged fixtures with post-fix residual diagnostics;
   + configured `fix_argv` execution, custom-command argument independence, distinct fix-output protocol classification, permissive auto-protocol rejection, pre-mutation command validation, and unsupported-profile CLI errors;
+  + deterministic fake-LSP CLI and MCP flows for text, allowlisted direct and nested commands, early command responses, command-scoped edits and rollback, transactional multi-file edits, atomic-exchange validation-gap races, ordered native-plus-LSP mutation, post-action versioned, unversioned, and unopened-document residual diagnostics, full and incremental document synchronization, transient retries, ambiguity, stale publications and document versions, concurrent source changes, malformed edits and protocol envelopes, blocked, flooding, and oversized server messages, unsupported profiles, and non-convergence;
 * Added `tests/fixtures/clippy.jsonl` as the current Clippy fixture shared by integration and benchmark paths.
 * Added `tests/fixtures/agda.txt` as the Agda CLI text fixture shared by pipeline integration coverage.
+* Added `tests/fixtures/fake_lsp.rs` as a deterministic stdio language server compiled by integration tests.
 
 ### Benchmark and fuzz hooks
 
