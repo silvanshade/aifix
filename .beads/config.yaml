@@ -54,7 +54,7 @@
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 
-sync.remote: "https://doltremoteapi.dolthub.com/silvanshade/aifix-beads"
+# sync.remote: "https://doltremoteapi.dolthub.com/silvanshade/aifix-beads"
 
 create.require-description: true
 
