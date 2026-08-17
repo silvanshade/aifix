@@ -57,5 +57,6 @@
 # sync.remote: "https://doltremoteapi.dolthub.com/silvanshade/aifix-beads"
 
 create.require-description: true
-
 export.auto: false
+sync:
+    remote: "git+https://github.com/silvanshade/aifix.git"
