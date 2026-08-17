@@ -354,7 +354,9 @@ struct ClippyJsonParser
 {
     /// Normalized diagnostics recovered from valid compiler-message records.
     diagnostics: Vec<Diagnostic>,
-    /// Whether any input record was valid JSON.
+    /// Whether any non-whitespace input record was observed.
+    saw_nonempty: bool,
+    /// Whether any structurally valid Cargo JSON record was observed.
     saw_json: bool,
     /// Whether any valid JSON record had the compiler-message reason.
     saw_compiler_message: bool,
@@ -376,6 +378,7 @@ impl ClippyJsonParser
     {
         Self {
             diagnostics: Vec::new(),
+            saw_nonempty: false,
             saw_json: false,
             saw_compiler_message: false,
             first_structured_error: None,
@@ -400,20 +403,40 @@ impl ClippyJsonParser
         if line.is_empty() {
             return;
         }
+        self.saw_nonempty = true;
 
         let value = match serde_json::from_str::<Value>(line) {
             | Ok(value) => value,
             | Err(error) => {
-                if self.first_structured_error.is_none() {
+                if (line.starts_with('{') || line.starts_with('['))
+                    && self.first_structured_error.is_none()
+                {
                     self.first_structured_error = Some(AifixError::Json(error));
                 }
                 return;
             },
         };
-        self.saw_json = true;
-        if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
+        let Some(reason) = value.get("reason").and_then(Value::as_str)
+        else {
+            if self.first_structured_error.is_none() {
+                self.first_structured_error = Some(AifixError::parser(
+                    "cargo JSON record missing string reason",
+                ));
+            }
+            return;
+        };
+        if reason != "compiler-message" {
+            if Self::is_valid_non_diagnostic_cargo_event(reason, &value) {
+                self.saw_json = true;
+            }
+            else if self.first_structured_error.is_none() {
+                self.first_structured_error = Some(AifixError::parser(format!(
+                    "malformed or unsupported cargo JSON record `{reason}`"
+                )));
+            }
             return;
         }
+        self.saw_json = true;
         self.saw_compiler_message = true;
         let Some(message) = value.get("message")
         else {
@@ -436,14 +459,102 @@ impl ClippyJsonParser
         self.diagnostics.push(diagnostic);
     }
 
+    /// Return whether a non-diagnostic Cargo JSON event has its required shape.
+    #[must_use]
+    fn is_valid_non_diagnostic_cargo_event(
+        reason: &str,
+        value: &Value,
+    ) -> bool
+    {
+        match reason {
+            | "compiler-artifact" => {
+                value.get("package_id").is_some_and(Value::is_string)
+                    && value.get("manifest_path").is_some_and(Value::is_string)
+                    && value.get("target").is_some_and(Self::is_valid_cargo_target)
+                    && value
+                        .get("profile")
+                        .is_some_and(Self::is_valid_cargo_profile)
+                    && value.get("features").is_some_and(Self::is_string_array)
+                    && value.get("filenames").is_some_and(Self::is_string_array)
+                    && value
+                        .get("executable")
+                        .is_some_and(|executable| executable.is_null() || executable.is_string())
+                    && value.get("fresh").is_some_and(Value::is_boolean)
+            },
+            | "build-script-executed" => {
+                value.get("package_id").is_some_and(Value::is_string)
+                    && value.get("linked_libs").is_some_and(Self::is_string_array)
+                    && value.get("linked_paths").is_some_and(Self::is_string_array)
+                    && value.get("cfgs").is_some_and(Self::is_string_array)
+                    && value.get("env").is_some_and(Self::is_string_pair_array)
+                    && value.get("out_dir").is_some_and(Value::is_string)
+            },
+            | "build-finished" => value.get("success").is_some_and(Value::is_boolean),
+            | _ => false,
+        }
+    }
+
+    /// Return whether a Cargo artifact target has the documented field types.
+    #[must_use]
+    fn is_valid_cargo_target(value: &Value) -> bool
+    {
+        value.get("kind").is_some_and(Self::is_string_array)
+            && value.get("crate_types").is_some_and(Self::is_string_array)
+            && value.get("name").is_some_and(Value::is_string)
+            && value.get("src_path").is_some_and(Value::is_string)
+            && value.get("edition").is_some_and(Value::is_string)
+            && value.get("doc").is_some_and(Value::is_boolean)
+            && value.get("doctest").is_some_and(Value::is_boolean)
+            && value.get("test").is_some_and(Value::is_boolean)
+    }
+
+    /// Return whether a Cargo artifact profile has the documented field types.
+    #[must_use]
+    fn is_valid_cargo_profile(value: &Value) -> bool
+    {
+        value.get("opt_level").is_some_and(Value::is_string)
+            && value.get("debuginfo").is_some_and(|debuginfo| {
+                debuginfo.is_null()
+                    || debuginfo.as_u64().is_some_and(|level| level <= 2)
+                    || matches!(
+                        debuginfo.as_str(),
+                        Some("line-directives-only" | "line-tables-only")
+                    )
+            })
+            && value.get("debug_assertions").is_some_and(Value::is_boolean)
+            && value.get("overflow_checks").is_some_and(Value::is_boolean)
+            && value.get("test").is_some_and(Value::is_boolean)
+    }
+
+    /// Return whether every element of a JSON array is a string.
+    #[must_use]
+    fn is_string_array(value: &Value) -> bool
+    {
+        value
+            .as_array()
+            .is_some_and(|values| values.iter().all(Value::is_string))
+    }
+
+    /// Return whether every element is a two-string Cargo environment pair.
+    #[must_use]
+    fn is_string_pair_array(value: &Value) -> bool
+    {
+        value.as_array().is_some_and(|pairs| {
+            pairs.iter().all(|pair| {
+                pair.as_array()
+                    .is_some_and(|items| items.len() == 2 && items.iter().all(Value::is_string))
+            })
+        })
+    }
+
     /// Finalize cargo parsing after all records have been consumed.
     ///
     /// # Contract
     /// - ensures: valid diagnostics take precedence over adjacent malformed
-    ///   records; cargo streams containing only non-diagnostic JSON succeed
-    ///   empty.
+    ///   records; empty, whitespace-only, and valid non-diagnostic cargo
+    ///   streams succeed empty.
     /// - fails: returns the first structured error when no diagnostic was
-    ///   recovered, or a parser error when no cargo JSON was observed.
+    ///   recovered, or a parser error for non-empty input without Cargo JSON.
     /// - panics: none.
     fn finish(self) -> Result<Vec<Diagnostic>, AifixError>
     {
@@ -453,13 +564,12 @@ impl ClippyJsonParser
         if let Some(error) = self.first_structured_error {
             return Err(error);
         }
-        if self.saw_json && !self.saw_compiler_message {
-            return Ok(self.diagnostics);
+        if self.saw_nonempty && !self.saw_json {
+            return Err(AifixError::parser(
+                "clippy JSON input did not contain cargo JSON records",
+            ));
         }
-
-        Err(AifixError::parser(
-            "clippy JSON input did not contain compiler messages",
-        ))
+        Ok(self.diagnostics)
     }
 }
 
@@ -497,8 +607,7 @@ where
 ///   cargo message reasons, and retains valid diagnostics even when adjacent
 ///   lines are malformed.
 /// - fails: returns the first JSON/parser error when no valid compiler-message
-///   diagnostic can be recovered, or a parser error when non-empty input
-///   contains no JSON messages.
+///   diagnostic can be recovered.
 /// - panics: none.
 fn parse_clippy_json(input: &str) -> Result<Vec<Diagnostic>, AifixError>
 {
@@ -1501,6 +1610,7 @@ fn one_based(value: u32) -> Option<u32>
 #[cfg(test)]
 mod tests
 {
+    use super::parse_clippy_json;
     use super::parse_diagnostics;
     use crate::error::AifixError;
     use crate::model::Protocol;
@@ -1533,6 +1643,99 @@ mod tests
         require(
             matches!(error, AifixError::Parser(_)),
             "auto mode should return a structured parser error",
+        )
+    }
+
+    /// Explicit Clippy parsing accepts completed streams with no diagnostics.
+    #[test]
+    fn clippy_json_accepts_clean_output() -> Result<(), AifixError>
+    {
+        for input in [
+            "",
+            " \n\t\n",
+            concat!(
+                "{\"reason\":\"compiler-artifact\",\"package_id\":\"path+file:///demo#0.1.0\",\"manifest_path\":\"/demo/Cargo.toml\",\"target\":{\"kind\":[\"bin\"],\"crate_types\":[\"bin\"],\"name\":\"demo\",\"src_path\":\"/demo/src/main.rs\",\"edition\":\"2024\",\"doc\":true,\"doctest\":false,\"test\":true},\"profile\":{\"opt_level\":\"0\",\"debuginfo\":\"line-tables-only\",\"debug_assertions\":true,\"overflow_checks\":true,\"test\":false},\"features\":[],\"filenames\":[\"/demo/target/debug/demo\"],\"executable\":\"/demo/target/debug/demo\",\"fresh\":true}\n",
+                "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
+            ),
+            "{\"reason\":\"build-finished\",\"success\":true}\n",
+        ] {
+            let diagnostics = parse_clippy_json(input)?;
+            require(
+                diagnostics.is_empty(),
+                "clean Clippy JSON should contain no diagnostics",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Explicit Clippy parsing still rejects malformed structured output.
+    #[test]
+    fn clippy_json_rejects_malformed_output() -> Result<(), AifixError>
+    {
+        let error = parse_clippy_json(
+            "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"truncated\"",
+        )
+        .err()
+        .ok_or_else(|| AifixError::parser("explicit Clippy parsing accepted malformed JSON"))?;
+
+        require(
+            matches!(error, AifixError::Json(_)),
+            "malformed Clippy JSON should return a JSON error",
+        )
+    }
+
+    /// Explicit Clippy parsing rejects valid JSON without a Cargo event shape.
+    #[test]
+    fn clippy_json_rejects_malformed_cargo_records() -> Result<(), AifixError>
+    {
+        for input in [
+            "null\n",
+            "{}\n",
+            "[]\n",
+            "{\"reason\":5}\n",
+            "{\"reason\":\"compiler-artifact\"}\n",
+        ] {
+            let error = parse_clippy_json(input)
+                .err()
+                .ok_or_else(|| AifixError::parser("accepted malformed Cargo JSON record"))?;
+            require(
+                matches!(error, AifixError::Parser(_)),
+                "malformed Cargo JSON should return a parser error",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Explicit Clippy parsing rejects non-empty streams without Cargo JSON.
+    #[test]
+    fn clippy_json_rejects_plain_text_output() -> Result<(), AifixError>
+    {
+        let error = parse_clippy_json("Finished `dev` profile\n")
+            .err()
+            .ok_or_else(|| AifixError::parser("explicit Clippy parsing accepted plain text"))?;
+
+        require(
+            matches!(error, AifixError::Parser(_)),
+            "plain text under the Clippy protocol should return a parser error",
+        )
+    }
+
+    /// Explicit Clippy parsing retains ordinary compiler diagnostics.
+    #[test]
+    fn clippy_json_retains_compiler_messages() -> Result<(), AifixError>
+    {
+        let diagnostics = parse_clippy_json(
+            "{\"reason\":\"compiler-message\",\"message\":{\"message\":\"used `unwrap()` on an `Option` value\",\"level\":\"warning\",\"code\":{\"code\":\"clippy::unwrap_used\"},\"spans\":[]}}\n",
+        )?;
+        let diagnostic = diagnostics
+            .first()
+            .ok_or_else(|| AifixError::parser("explicit Clippy parsing returned no diagnostic"))?;
+
+        require(
+            diagnostics.len() == 1
+                && diagnostic.code.as_deref() == Some("clippy::unwrap_used")
+                && diagnostic.source == "clippy",
+            "explicit Clippy parsing should retain compiler-message diagnostics",
         )
     }
 

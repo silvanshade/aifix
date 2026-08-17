@@ -25,6 +25,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/)
 * _(mcp)_ Import parse_diagnostics helper
 * Return error for unexpected typescript state
 * _(batch)_ Process large tool output with bounded spill files
+* _(batch)_ Accept clean Clippy output and recover MCP transport after request deadlines
 
 ### Refactor
 

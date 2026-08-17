@@ -82,6 +82,8 @@ The server advertises tools for pipeline and batch digests, batch profile discov
 `aifix_batch` accepts an omitted or empty `profile` as `auto`, and unknown profiles return structured recovery data for choosing a valid profile.
 Set MCP `aifix_batch` argument `fix` to `true` only when the caller intends to mutate the workspace before receiving residual diagnostics.
 Set MCP `aifix_batch` argument `codeActions` to `true` only when the caller intends to apply bounded, diagnostic-correlated LSP actions before receiving residual diagnostics.
+Set MCP `aifix_batch` argument `timeoutMs` on calls without workspace mutations or cache updates that need a client-compatible deadline.
+Expiry returns a structured `request-timeout`; later batch calls return `batch-in-progress` until that diagnostic process finishes, while other JSON-RPC requests remain available.
 Project-local cache state is stored in `.aifix/diagnostics.json`.
 Cached fix replay feeds stored patches to `git apply` through direct argv and stdin; `suggest` mode returns patch text without invoking Git.
 
@@ -94,6 +96,7 @@ Cached fix replay feeds stored patches to `git apply` through direct argv and st
 * Pass batch extra arguments only to named profiles; `auto` rejects them because they are profile-specific.
 * Set batch `fix` to `true` only for an explicit mutating run; the result contains diagnostics from the post-fix pass.
 * Set batch `codeActions` to `true` only for an explicit mutating LSP run; unsafe, ambiguous, disabled, stale, or unallowlisted actions remain unapplied.
+* Set batch `timeoutMs` when the client needs a bounded wait; after a structured timeout, wait for the active diagnostic process to finish before retrying with a larger deadline.
 * Use `aifix_dedupe` and `aifix_guidance` for repeated project-local diagnostic triage and handoff guidance.
 * Use `aifix_report_fix` and `aifix_replay_fixes` only for explicitly recorded cached patch replay; respect `suggest`, `dry-run`, and `apply` modes.
 * `aifix` normalizes diagnostics and does not invent fixes.

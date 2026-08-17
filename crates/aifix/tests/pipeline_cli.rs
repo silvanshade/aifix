@@ -2912,8 +2912,8 @@ diff --git a/src/main.rs b/src/main.rs
         )
     }
 
-    /// Verifies a nonzero fix command cannot masquerade as diagnostic output
-    /// when its selected parser recognizes no diagnostics.
+    /// Verifies a nonzero fix command cannot masquerade as Cargo diagnostic
+    /// output when its selected parser rejects the structured record shape.
     #[test]
     fn cli_batch_fix_rejects_nonzero_output_without_diagnostics() -> Result<(), Box<dyn Error>>
     {
@@ -2943,9 +2943,11 @@ diff --git a/src/main.rs b/src/main.rs
             &xdg_home,
         )?;
         let stderr = unsuccessful_stderr(output)?;
-        require(stderr.contains("output contained no diagnostics"), || {
-            format!("nonzero fix output without diagnostics should fail explicitly: {stderr}")
-        })
+        require(
+            stderr.contains("output was not parseable")
+                && stderr.contains("cargo JSON record missing string reason"),
+            || format!("nonzero fix output with malformed Cargo JSON should fail: {stderr}"),
+        )
     }
 
     /// Verifies a signal-terminated fixer fails even after emitting parseable

@@ -11,9 +11,14 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::str::FromStr as _;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
+use core::time::Duration;
 use std::io;
 use std::io::BufRead as _;
 use std::io::Write as _;
+use std::sync::mpsc;
+use std::thread;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -63,6 +68,9 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Server implementation name reported during initialization.
 const SERVER_NAME: &str = "aifix";
+
+/// Whether a deadline-bound batch worker is still completing in the background.
+static DEADLINE_BATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Server implementation version reported during initialization.
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -321,6 +329,7 @@ fn batch_schema() -> Value
             "format": format_schema(),
             "maxDiagnostics": { "type": "integer", "minimum": 0 },
             "maxOutputBytes": { "type": "integer", "minimum": 0, "description": "Maximum bytes accepted from each invoked-tool output stream." },
+            "timeoutMs": { "type": "integer", "minimum": 1, "description": "Optional deadline in milliseconds for calls without workspace mutations or diagnostic-cache updates. A deadline returns a structured timeout while the server remains ready for later JSON-RPC requests." },
             "fix": { "type": "boolean", "description": "Run supported native automatic fixes before the residual diagnostic pass. Mutates the workspace." },
             "codeActions": { "type": "boolean", "description": "Apply bounded diagnostic-correlated LSP code actions before returning residual diagnostics. Mutates the workspace." },
             "dedupe": { "type": "boolean" },
@@ -585,19 +594,76 @@ fn run_pipeline_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 /// # Contract
 /// - requires: arguments may omit profile to request auto; optional runtime
 ///   overrides must match the selected profile's contract.
-/// - ensures: mirrors CLI batch config resolution, defaults omitted or empty
-///   profile to auto, and applies requested cache side effects before
-///   rendering.
+/// - ensures: mirrors CLI batch config resolution and returns within
+///   `timeoutMs` when supplied, leaving the transport ready for later requests.
 /// - fails: returns configuration, process, parser, cache, rendering setup, or
 ///   structured profile-selection errors.
 /// - panics: none.
 fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
 {
     let args: BatchArgs = serde_json::from_value(arguments)?;
-    let cwd = resolve_project_root(args.cwd.as_deref())?;
+    if DEADLINE_BATCH_RUNNING.load(Ordering::Acquire) {
+        return Ok(batch_in_progress_output());
+    }
+    let Some(timeout_ms) = args.timeout_ms
+    else {
+        return run_batch_tool_sync(args);
+    };
+    if args.mutations.fix || args.mutations.code_actions || args.dedupe || args.record_metrics {
+        return Err(AifixError::invalid_argument(
+            "timeoutMs is supported only for batch calls without mutations or cache updates",
+        ));
+    }
+    if DEADLINE_BATCH_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(batch_in_progress_output());
+    }
+    let guard = DeadlineBatchGuard;
+
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("aifix-mcp-batch".to_owned())
+        .spawn(move || {
+            let result = run_batch_tool_sync(args);
+            drop(guard);
+            drop(sender.send(result));
+        })
+        .map_err(|error| {
+            AifixError::process(format!(
+                "failed to start deadline-bound batch call: {error}"
+            ))
+        })?;
+
+    match receiver.recv_timeout(Duration::from_millis(timeout_ms)) {
+        | Ok(result) => result,
+        | Err(mpsc::RecvTimeoutError::Timeout) => Ok(batch_timeout_output(timeout_ms)),
+        | Err(mpsc::RecvTimeoutError::Disconnected) => Err(AifixError::process(
+            "deadline-bound batch worker ended without a result",
+        )),
+    }
+}
+
+/// Execute a decoded batch request without transport deadline handling.
+fn run_batch_tool_sync(args: BatchArgs) -> Result<ToolOutput, AifixError>
+{
+    let BatchArgs {
+        profile,
+        extra_args,
+        cwd,
+        protocol,
+        format,
+        max_diagnostics,
+        max_output_bytes,
+        mutations,
+        dedupe,
+        record_metrics,
+        timeout_ms: _,
+    } = args;
+    let cwd = resolve_project_root(cwd.as_deref())?;
     let loaded_config = Config::discover(&cwd)?;
-    let profile = args
-        .profile
+    let profile = profile
         .as_deref()
         .map(str::trim)
         .filter(|profile| !profile.is_empty())
@@ -605,25 +671,24 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
     if !is_known_profile(profile, &loaded_config.config) {
         return Ok(unknown_profile_output(profile, &loaded_config.config));
     }
-    if profile == AUTO_PROFILE && !args.extra_args.is_empty() {
+    if profile == AUTO_PROFILE && !extra_args.is_empty() {
         return Ok(auto_extra_args_output(&loaded_config.config));
     }
 
     let profile_config = loaded_config.config.profiles.get(profile);
-    let format = parse_optional_format(args.format.as_deref())?
+    let format = parse_optional_format(format.as_deref())?
         .or_else(|| profile_config?.format)
         .or(loaded_config.config.default_format)
         .unwrap_or(OutputFormat::Markdown);
     let profile_limit = profile_config.and_then(|config| config.max_diagnostics);
-    let max_diagnostics = args
-        .max_diagnostics
+    let max_diagnostics = max_diagnostics
         .or(profile_limit)
         .or(loaded_config.config.max_diagnostics);
     let profile_output_limit = profile_config.and_then(|config| config.max_output_bytes);
-    let max_output_override = args.max_output_bytes.or(profile_output_limit);
-    let fix_phases = FixPhases::new(args.mutations.fix, args.mutations.code_actions);
+    let max_output_override = max_output_bytes.or(profile_output_limit);
+    let fix_phases = FixPhases::new(mutations.fix, mutations.code_actions);
     let mut digest = if profile == AUTO_PROFILE {
-        if args.mutations.fix || args.mutations.code_actions {
+        if mutations.fix || mutations.code_actions {
             run_auto_profile_with_fixes(
                 &loaded_config.config,
                 &cwd,
@@ -642,11 +707,11 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
         }
     }
     else {
-        let max_output_bytes = max_output_override
+        let effective_max_output_bytes = max_output_override
             .or(loaded_config.config.max_output_bytes)
             .unwrap_or(DEFAULT_BATCH_STREAM_OUTPUT_LIMIT);
-        let limits = BatchLimits::new(max_diagnostics, max_output_bytes);
-        let protocol = parse_optional_protocol(args.protocol.as_deref())?
+        let limits = BatchLimits::new(max_diagnostics, effective_max_output_bytes);
+        let protocol = parse_optional_protocol(protocol.as_deref())?
             .or_else(|| profile_config?.protocol)
             .or_else(|| default_protocol_for_profile(profile))
             .or(loaded_config.config.default_protocol)
@@ -655,29 +720,20 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
             | Some(profile_config) => run_configured_profile_with_fixes(
                 profile,
                 profile_config,
-                &args.extra_args,
+                &extra_args,
                 protocol,
                 &cwd,
                 limits,
                 fix_phases,
             )?,
-            | None => run_profile_with_fixes(
-                profile,
-                &args.extra_args,
-                protocol,
-                &cwd,
-                limits,
-                fix_phases,
-            )?,
+            | None => {
+                run_profile_with_fixes(profile, &extra_args, protocol, &cwd, limits, fix_phases)?
+            },
         }
     };
-    if args.dedupe || args.record_metrics {
-        let diagnostics = apply_optional_cache_updates(
-            &cwd,
-            digest.diagnostics,
-            args.dedupe,
-            args.record_metrics,
-        )?;
+    if dedupe || record_metrics {
+        let diagnostics =
+            apply_optional_cache_updates(&cwd, digest.diagnostics, dedupe, record_metrics)?;
         let invocation = digest.invocation;
         let profile_statuses = digest.profile_statuses;
         digest = build_digest(diagnostics, invocation, max_diagnostics);
@@ -685,6 +741,46 @@ fn run_batch_tool(arguments: Value) -> Result<ToolOutput, AifixError>
     }
 
     Ok(ToolOutput::Digest { digest, format })
+}
+
+/// Releases the single background deadline-bound worker slot.
+struct DeadlineBatchGuard;
+
+impl Drop for DeadlineBatchGuard
+{
+    fn drop(&mut self)
+    {
+        DEADLINE_BATCH_RUNNING.store(false, Ordering::Release);
+    }
+}
+
+/// Build a structured result while an earlier timed-out batch is still running.
+#[must_use]
+fn batch_in_progress_output() -> ToolOutput
+{
+    ToolOutput::StructuredError {
+        text: "an earlier deadline-bound batch request is still running".to_owned(),
+        structured_content: json!({
+            "kind": "batch-in-progress",
+            "state": "incomplete",
+            "recovery_hint": "Wait for the earlier diagnostic process to finish before retrying aifix_batch.",
+        }),
+    }
+}
+
+/// Build a structured timeout result for a deadline-bound batch request.
+#[must_use]
+fn batch_timeout_output(timeout_ms: u64) -> ToolOutput
+{
+    ToolOutput::StructuredError {
+        text: format!("batch request exceeded its {timeout_ms} ms deadline"),
+        structured_content: json!({
+            "kind": "request-timeout",
+            "timeout_ms": timeout_ms,
+            "state": "incomplete",
+            "recovery_hint": "Wait for the diagnostic process to finish, then retry with a larger timeoutMs. The MCP transport remains ready for subsequent requests.",
+        }),
+    }
 }
 
 /// Run the batch profile discovery MCP tool.
@@ -1125,6 +1221,8 @@ struct BatchArgs
     max_diagnostics: Option<usize>,
     /// Optional per-stream output byte budget.
     max_output_bytes: Option<usize>,
+    /// Optional non-mutating request deadline in milliseconds.
+    timeout_ms: Option<u64>,
     /// Optional mutating phases, flattened into the top-level tool arguments.
     #[serde(flatten)]
     mutations: BatchMutationArgs,
@@ -1226,6 +1324,19 @@ struct GuidanceArgs
 mod tests
 {
     use std::fs;
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+
+    /// Serializes tests that exercise the process-wide MCP batch worker slot.
+    static BATCH_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Acquire the batch-test lock without panicking on poisoned state.
+    fn lock_batch_tests() -> Result<MutexGuard<'static, ()>, AifixError>
+    {
+        BATCH_TEST_LOCK
+            .lock()
+            .map_err(|error| AifixError::process(format!("batch test lock poisoned: {error}")))
+    }
 
     use super::*;
 
@@ -1233,6 +1344,7 @@ mod tests
     #[test]
     fn batch_tool_honors_max_output_bytes() -> Result<(), AifixError>
     {
+        let _guard = lock_batch_tests()?;
         let schema = batch_schema();
         assert_eq!(
             schema
@@ -1282,5 +1394,92 @@ mod tests
             "MCP batch should apply camel-case output budget: {error}"
         );
         Ok(())
+    }
+    /// Verify deadline expiry is structured and does not poison later frames.
+    #[test]
+    fn batch_timeout_preserves_transport_recovery() -> Result<(), AifixError>
+    {
+        let _guard = lock_batch_tests()?;
+        let schema = batch_schema();
+        assert_eq!(
+            schema
+                .pointer("/properties/timeoutMs/minimum")
+                .and_then(Value::as_u64),
+            Some(1),
+            "batch schema should publish timeoutMs"
+        );
+        let cwd = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("aifix-mcp-timeout-{}", std::process::id())),
+        )
+        .map_err(|path| {
+            AifixError::utf8(format!(
+                "temporary MCP timeout test path was not UTF-8: {}",
+                path.display()
+            ))
+        })?;
+        drop(fs::remove_dir_all(&cwd));
+        fs::create_dir_all(&cwd).map_err(AifixError::io)?;
+        fs::write(
+            cwd.join("aifix.toml"),
+            concat!(
+                "[profiles.slow]\n",
+                "argv = [\"sleep\", \"0.1\"]\n",
+                "protocol = \"nushell-text\"\n",
+            ),
+        )
+        .map_err(AifixError::io)?;
+
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 6_u64,
+            "method": "tools/call",
+            "params": {
+                "name": "aifix_batch",
+                "arguments": {
+                    "profile": "slow",
+                    "cwd": cwd.as_str(),
+                    "timeoutMs": 1_u64
+                }
+            }
+        })
+        .to_string();
+        let timeout = handle_line(&request)
+            .ok_or_else(|| AifixError::parser("deadline-bound tools/call returned no response"))?;
+        assert_eq!(
+            timeout
+                .pointer("/result/structuredContent/kind")
+                .and_then(Value::as_str),
+            Some("request-timeout"),
+            "deadline should have a distinct structured error kind"
+        );
+
+        let retry = handle_line(&request)
+            .ok_or_else(|| AifixError::parser("retry during active batch returned no response"))?;
+        assert_eq!(
+            retry
+                .pointer("/result/structuredContent/kind")
+                .and_then(Value::as_str),
+            Some("batch-in-progress"),
+            "retry must not start a second worker while timed-out work completes"
+        );
+
+        let ping = handle_line(r#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#)
+            .ok_or_else(|| AifixError::parser("valid ping after timeout returned no response"))?;
+        assert_eq!(
+            ping.pointer("/result"),
+            Some(&json!({})),
+            "first valid request after timeout should succeed"
+        );
+        for _ in 0_u16 .. 200_u16 {
+            if !DEADLINE_BATCH_RUNNING.load(Ordering::Acquire) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            !DEADLINE_BATCH_RUNNING.load(Ordering::Acquire),
+            "deadline-bound worker should eventually release its slot"
+        );
+        fs::remove_dir_all(&cwd).map_err(AifixError::io)
     }
 }

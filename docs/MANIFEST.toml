@@ -4,7 +4,7 @@
 
 [[files]]
 path = "README.md"
-b3 = "812ade52e9f70c56ec6696a3132fbbaa0f8d3979a67df14dd3937810a355bf9e"
+b3 = "0a4489f59753397821de06f97b616745f6bf6a14df498ea9495af77d15c5448e"
 
 [[files]]
 path = "ARCHITECTURE.md"
@@ -16,7 +16,7 @@ b3 = "eda51433a2f7c52e7fb10a650632155a0ab4be839264f0b3626e2a3574c468cc"
 
 [[files]]
 path = "CHANGELOG.md"
-b3 = "de0d5eb0d934a0b70a94651a89ea2a68ca29e5e587e4a9d8c808e6c1e6cf743d"
+b3 = "39690cb638c3019d6b7e73ab18e85f5deca68c0d4ddd95fd1e4b597075e5f2b2"
 
 [[files]]
 path = "docs/ADR.md"
