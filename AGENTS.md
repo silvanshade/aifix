@@ -11,7 +11,6 @@ The project name is still tentative until publication; keep the collision caveat
 
 The shared operating doctrine arrives with the gandr-conventions conformance rework (tracked on silvanshade/vault-gandr#101); until it lands, the gandr-lang/gandr AGENTS chain is the reference.
 
-
 ## Project delta
 
 * **Orientation**: adapters parse diagnostics, the model normalizes, digest groups and deduplicates, renderers render, and the CLI dispatches.

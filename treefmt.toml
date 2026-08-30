@@ -17,7 +17,6 @@ excludes = [
   "vendor/**",
 ]
 
-
 [formatter."docs-manifest-drift"]
 command = "nu"
 options = ["scripts/check-docs-manifest-drift.nu"]
