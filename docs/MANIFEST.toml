@@ -28,20 +28,4 @@ b3 = "708a6190693d42e5545bc936fff4f35ddea340ebce627588369b29821ec1b451"
 
 [[files]]
 path = "AGENTS.md"
-b3 = "60f3f729a35cbab37e9e4c07f71f83da994906171209bc5461edc6bb0475a6e5"
-
-[[files]]
-path = ".omp/skills/find-best-rust-crates/SKILL.md"
-b3 = "b43a6d693b1c439cb177c53a5b872dfd6c5b7b69cf42e0c03296e6f7002e141c"
-
-[[files]]
-path = ".omp/skills/git-cliff-treefmt-changelog/SKILL.md"
-b3 = "2897151a4dfaacb5d0b41fe2ecdec1d101d044b5813f2c09083e7dcd70a25db8"
-
-[[files]]
-path = ".omp/skills/find-best-typescript-packages/SKILL.md"
-b3 = "979d67814e66ddd59fe7b73816ee3d7bfd5c4d86694734c21f013a2ff58d5d41"
-
-[[files]]
-path = ".omp/skills/reference-project-convention-drift/SKILL.md"
-b3 = "7d1e4efd2749c3698bcadf19ef2b07c4ef63729bfe6946c5a8bcd988c14b86de"
+b3 = "f2ae239f564d3ce1d8aa48b925da5031af17d4087e7dfb03f18a76695f18ec38"
