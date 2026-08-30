@@ -1,0 +1,13 @@
+modelRoles:
+  default: openai-codex/gpt-5.6-sol:medium
+  commit: openai-codex/gpt-5.6-luna:high
+  designer: openai-codex/gpt-5.6-sol:medium
+  plan: openai-codex/gpt-5.6-sol:medium
+  slow: openai-codex/gpt-5.6-sol:medium
+  smol: openai-codex/gpt-5.6-luna:max
+  task: openai-codex/gpt-5.6-sol:medium
+  vision: openai-codex/gpt-5.6-sol:medium
+task:
+  prewalk: false
+prewalk:
+  enabled: false

@@ -1,0 +1,10 @@
+#:tombi toml-version = "v1.0.0"
+#:schema https://mise.jdx.dev/schema/mise-task.json
+
+[treefmt]
+description = "Format and lint supported project files"
+run = "treefmt"
+
+["treefmt:check"]
+description = "Check supported project files without rewriting them"
+run = "treefmt --ci"

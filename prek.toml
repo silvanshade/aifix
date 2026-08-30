@@ -2,7 +2,12 @@
 #:schema https://www.schemastore.org/prek.json
 
 fail_fast = false
-default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
+default_install_hook_types = [
+  "pre-commit",
+  "pre-push",
+  "commit-msg",
+  "prepare-commit-msg",
+]
 
 [[repos]]
 repo = "local"
@@ -18,19 +23,10 @@ pass_filenames = false
 stages = ["pre-commit"]
 
 [[repos.hooks]]
-id = "commitlint"
-name = "commitlint"
-entry = "mise x -- commitlint --edit"
-language = "system"
-stages = ["commit-msg"]
-always_run = true
-pass_filenames = true
-
-[[repos.hooks]]
 id = "treefmt-check"
 name = "treefmt --ci"
 language = "system"
-entry = "mise exec -- treefmt --ci"
+entry = "mise run treefmt:check"
 pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
@@ -53,7 +49,34 @@ files.glob = ["docs/**"]
 pass_filenames = false
 stages = ["pre-commit"]
 
+# Session trailer and commit-lint gates.
+[[repos.hooks]]
+id = "session-trailer"
+name = "append session trailer"
+language = "system"
+entry = "sh scripts/append-session-trailer.sh"
+stages = ["prepare-commit-msg"]
+always_run = true
+
+[[repos.hooks]]
+id = "commitlint"
+name = "commitlint"
+entry = "mise x -- commitlint --edit"
+language = "system"
+stages = ["commit-msg"]
+always_run = true
+pass_filenames = true
+
 # Aifix pre-push gates.
+[[repos.hooks]]
+id = "push-identity"
+name = "push identity guard"
+language = "system"
+entry = "sh scripts/push-identity-guard.sh"
+stages = ["pre-push"]
+always_run = true
+pass_filenames = false
+
 [[repos.hooks]]
 id = "act-ci"
 name = "full cached act CI simulation"

@@ -1,5 +1,5 @@
-#:schema https://www.schemastore.org/treefmt.json
 #:tombi toml-version = "v1.0.0"
+#:schema https://www.schemastore.org/treefmt.json
 
 # Keep generated, vendored, local, and bd-owned stores out of repository-wide
 # rewrites. Source, docs, examples, and fixtures remain visible to formatters.
@@ -15,6 +15,9 @@ excludes = [
   "temp/**",
   "tmp/**",
   "vendor/**",
+  # Verbatim-mandated content: license text and the resolver's lockfile.
+  "**/LICENSE.*.txt",
+  "Cargo.lock",
 ]
 
 [formatter."docs-manifest-drift"]
@@ -22,12 +25,16 @@ command = "nu"
 options = ["scripts/check-docs-manifest-drift.nu"]
 includes = ["docs/MANIFEST.toml"]
 
+# The mutating formatter takes the lower priority so `fmt` completes before
+# `check` when both cover the same set.
 [formatter."rumdl-format"]
+priority = 0
 command = "rumdl"
 options = ["fmt"]
 includes = ["*.md"]
 
 [formatter."rumdl-verify"]
+priority = 1
 command = "rumdl"
 options = ["check"]
 includes = ["*.md"]
@@ -38,11 +45,13 @@ options = ["--edition", "2024", "--config", "skip_children=true"]
 includes = ["*.rs"]
 
 [formatter."tombi-format"]
+priority = 0
 command = "tombi"
 options = ["format"]
 includes = ["*.toml"]
 
 [formatter."tombi-lint"]
+priority = 1
 command = "tombi"
 options = ["lint", "--error-on-warnings"]
 includes = ["*.toml"]

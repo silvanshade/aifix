@@ -1,0 +1,25 @@
+compaction:
+  idleEnabled: true
+  idleThresholdTokens: 400000
+  thresholdTokens: -1
+  thresholdPercent: -1
+  handoffSaveToDisk: true
+  methodOrder:
+    - remote
+    - shake
+    - handoff
+    - snapcompact
+    - soft
+modelRoles:
+  default: stealth/ox-alpha:max
+  commit: stealth/ox-alpha:max
+  designer: stealth/ox-alpha:max
+  plan: stealth/ox-alpha:max
+  slow: stealth/ox-alpha:max
+  smol: stealth/ox-alpha:max
+  task: stealth/ox-alpha:max
+  vision: stealth/ox-alpha:max
+prewalk:
+  enabled: false
+task:
+  prewalk: false

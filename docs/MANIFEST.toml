@@ -28,4 +28,12 @@ b3 = "708a6190693d42e5545bc936fff4f35ddea340ebce627588369b29821ec1b451"
 
 [[files]]
 path = "AGENTS.md"
-b3 = "00b1b8b4ff0369b7ffe16149bb6b04994bad7ba68f09788776444ceadc49b853"
+b3 = "7baad52d0068a7f707ec84d0f862a7e47202fd622cffe38c32d86543a7101bef"
+
+[[files]]
+path = "docs/agents.md"
+b3 = "b4e58f90e9da0fd8eea1c67efaf91f00c4a97517d72d1b055e7b4c8af1f95dc9"
+
+[[files]]
+path = "docs/agents/ci-local.md"
+b3 = "61acb3483a333966e9a21b20b5b338025d6e3b3ce777ff618bf58445c08e0dde"
