@@ -7,9 +7,9 @@ run = """
 nu scripts/check-docs-manifest-drift.nu
 """
 
-# Kept for the CI docs-gates job, which references this task. The prek
-# conflict-marker hook is omitted per the vault-gandr#90 owner ruling; this
-# task is the grep-shaped gate and stays a CI check only.
+# The grep-shaped conflict-marker gate over tracked text-like files, backed
+# by scripts/check-conflict-markers.nu; invoked via `mise run` (act and local
+# passes), not as a prek hook.
 ["docs:conflict-markers"]
 description = "Reject unresolved Git conflict markers in tracked text-like files"
 run = """

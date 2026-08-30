@@ -32,7 +32,7 @@ b3 = "7baad52d0068a7f707ec84d0f862a7e47202fd622cffe38c32d86543a7101bef"
 
 [[files]]
 path = "docs/agents.md"
-b3 = "b4e58f90e9da0fd8eea1c67efaf91f00c4a97517d72d1b055e7b4c8af1f95dc9"
+b3 = "ce8da83db568a10b1f4e778198e486cfcfad83b0eb89f543fcb76d141ff69fe0"
 
 [[files]]
 path = "docs/agents/ci-local.md"

@@ -4,6 +4,8 @@
 # would reject them.
 #:tombi schema.strict = false
 
+min_version = "2026.7.5"
+
 [settings]
 activate_aggressive = true
 experimental = true
@@ -27,7 +29,7 @@ RUSTUP_TOOLCHAIN = "{{ get_env(name='RUSTUP_TOOLCHAIN', default='nightly-2026-07
 # Cargo resolves external subcommand binaries from PATH. Prefer the active
 # rustup toolchain so Homebrew/system Rust cannot shadow the pinned
 # toolchain.
-_.path = ["{{ exec(command='dirname \"$(command -v rustup || echo \"$HOME/.cargo/bin/rustup\")\"') }}"]
+_.path = ["{{ exec(command='command -v rustup >/dev/null 2>&1 || { echo \"rustup required: the pinned toolchains resolve through it\" >&2; exit 1; }; dirname \"$(command -v rustup)\"') }}"]
 
 [task_config]
 includes = [".config/mise/tasks"]

@@ -39,12 +39,17 @@ const SCOPES = [
   "adr",
   "agda",
   "batch",
+  "cache",
+  "cargo",
   "changelog",
   "ci",
   "cli",
   "config",
   "core",
+  "git",
   "mcp",
+  "mise",
+  "release",
   "repo",
 ];
 

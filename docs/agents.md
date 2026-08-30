@@ -98,18 +98,22 @@ The gandr lint wall and dylint gates enforce those pages in gandr; this repo ado
 
 ## Tooling
 
+Route by the task at hand; the trigger column **binds**.
+Reaching for the raw command when a row matches is a conformance miss, not a style preference.
+A routed tool that is missing, broken, or degraded: report it (the detection bullet below), then the raw alternative is conformant — name the fallback where it is used.
+
+| About to                                                                                                                        | Use                                                                                                                      | Never                                    |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| run or read compiler / linter / language-server / test / text diagnostics (`cargo check`, `clippy`, `rustc`, failing `nextest`) | `aifix`: `aifix batch` scoped to the target, or pipe the output through `aifix pipeline`; work from its deduped findings | hand-triage a raw diagnostic dump        |
+| orient or answer structure / implementation queries — find an item, its callers, impact, blast radius                           | `codegraph` (`codegraph explore`)                                                                                        | a grep-and-open-files walk               |
+| understand changes — entity-level diff, blame, conflict risk                                                                    | `sem` (CLI only)                                                                                                         | raw `git diff` / `git blame` archaeology |
+| resolve a merge conflict                                                                                                        | `weave`                                                                                                                  | hand-editing conflict markers            |
+| vet a URL, shell command, MCP config, or risky input                                                                            | `tirith`                                                                                                                 | eyeballing it                            |
+| rebase, gate, land                                                                                                              | `wt merge`                                                                                                               | ad-hoc rebase scripting                  |
+| iterate on `.github/workflows/ci.yml`                                                                                           | `act` via the repo wrapper (`docs/agents/ci-local.md`)                                                                   | hosted-run trial and error               |
+
 * **ALWAYS** read tool-output images on oh-my-pi: snapcompact, context-efficient by design.
-* **ALWAYS** detect configured tools at session start.
-  Route tasks through high-priority tools.
-* **ALWAYS** `codegraph`: orient, structure/implementation queries, impact + blast radius.
-* **ALWAYS** `sem`: (CLI only) entity-level diffs, blame, conflict risk in version control.
-* **ALWAYS** `weave`: entity-level merge resolution.
-* **ALWAYS** `aifix`: enumerate compiler / linter / language-server / text diagnostics.
-* **ALWAYS** `tirith`: vet URLs, shell commands, MCP config, risky inputs.
-* **ALWAYS** report confusing, broken, duplicate, degraded, unavailable tool configuration.
-* `wt merge`: rebase, gates, landing.
-* `act`: local CI iteration on `.github/workflows/ci.yml`, no hosted minutes, no run approvals.
-  See `docs/agents/ci-local.md`.
+* **ALWAYS** detect configured tools at session start; report confusing, broken, duplicate, degraded, unavailable tool configuration.
 * Else: OMP tools for files, edits, search, non-diagnostic LSP.
 
 ## Operation Economy
@@ -212,16 +216,16 @@ Project-specific constraints for `aifix`, layered over the shared doctrine above
   Do not leave aliases, compatibility shims, or deprecated call paths unless an accepted ADR requires them.
 * **Efficiency**: do not allocate or copy unless it makes ownership or output necessary.
   Avoid serializing raw payloads for identity or dedupe.
-* **Dependencies**: before adding or changing Rust dependencies, use the local crate-selection skill.
+* **Dependencies**: before adding or changing Rust dependencies, survey the candidates.
   Consider maintenance health, feature footprint, transitive size, security response, and contributor reputation; prefer the standard library and existing workspace dependencies when they are enough.
 * **Docs and ADRs**: root docs describe project behavior; crate-local docs under `crates/aifix/docs/` describe crate implementation details.
   Record accepted architectural decisions in `docs/ADR.md`; mirror crate-local decisions in `crates/aifix/docs/ADR.md` when they affect crate maintenance.
 * **Doc truthfulness**: keep docs factual.
   Do not describe placeholders, scaffolds, or planned work as implemented behavior.
-  The project name remains tentative until publication.
+  The project name remains tentative until publication; keep the collision caveat in public docs.
 * **Manifest discipline**: when publishing doc edits that affect registered docs, refresh `docs/MANIFEST.toml` hashes with the project formatter/manifest workflow.
   For docs-only agent assignments that explicitly ban formatters or gates, review the rendered content instead and report the skipped manifest refresh.
-* **Tracking**: track ongoing work and drift in beads per the core workflow.
+* **Tracking**: track ongoing work and drift in beads.
   Beads that implement or revise decisions should link the relevant ADR entry.
 
 ### Commands and gates
@@ -239,7 +243,7 @@ Use the narrowest command that proves your change:
   + `aifix completions bash`
 
 Do not suppress warnings, skip tests, or narrow a verification claim beyond what you actually ran.
-For now, ignore linter failures whose diagnostic target is `./CHANGELOG.md` in this local aifix repo; do not ignore unrelated failures.
+Ignore linter failures whose diagnostic target is `./CHANGELOG.md` in this local aifix repo; do not ignore unrelated failures.
 
 Every nontrivial change needs proof: run the tests or smoke scenario that exercises the changed behavior, plus any directly affected unit or integration tests.
 For docs-only changes, do not run formatters or gates unless explicitly requested; review the rendered content and keep it aligned with observed code and prior verification.
