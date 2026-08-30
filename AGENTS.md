@@ -1,6 +1,6 @@
 # Agent Guidance
 
-Compact aifix project delta for coding agents — keep shared doctrine in the core, and keep this file focused on project-specific constraints.
+Compact aifix project delta for coding agents — this file holds project-specific constraints only.
 
 `aifix` is a Rust workspace for an agent-first diagnostic adapter.
 The CLI turns noisy compiler, linter, LSP, and text diagnostics into a normalized digest that coding agents can consume.
@@ -41,7 +41,7 @@ The shared operating doctrine arrives with the gandr-conventions conformance rew
   The project name remains tentative until publication.
 * **Manifest discipline**: when publishing doc edits that affect registered docs, refresh `docs/MANIFEST.toml` hashes with the project formatter/manifest workflow.
   For docs-only agent assignments that explicitly ban formatters or gates, review rendered content instead and report the skipped manifest refresh.
-* **Tracking**: track ongoing work and drift in beads per the core workflow.
+* **Tracking**: track ongoing work and drift in beads.
   Beads that implement or revise decisions should link the relevant ADR entry.
 
 ## Commands and gates

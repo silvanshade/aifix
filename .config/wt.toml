@@ -11,8 +11,6 @@ wt-step-copy-gitignored = "wt step copy-ignored"
 beads-chmod = "chmod 0700 .beads"
 
 [[pre-start]]
-
-[[pre-start]]
 beads-pull = "bd dolt pull || true"
 
 [pre-merge]
