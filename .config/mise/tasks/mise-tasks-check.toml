@@ -1,0 +1,51 @@
+#:tombi toml-version = "v1.0.0"
+#:schema https://mise.jdx.dev/schema/mise-task.json
+
+["docs:manifest-drift"]
+description = "Verify docs/MANIFEST.toml BLAKE3 hashes against documented files"
+run = """
+nu scripts/check-docs-manifest-drift.nu
+"""
+
+# The grep-shaped conflict-marker gate over tracked text-like files, backed
+# by scripts/check-conflict-markers.nu; invoked via `mise run` (act and local
+# passes), not as a prek hook.
+["docs:conflict-markers"]
+description = "Reject unresolved Git conflict markers in tracked text-like files"
+run = """
+nu scripts/check-conflict-markers.nu
+"""
+
+["commitlint:last"]
+description = "Validate the most recent commit message"
+run = """
+aube exec commitlint --last --config .commitlintrc.mts
+"""
+
+["commitlint:branch"]
+description = "Validate commit messages from main to the current branch"
+run = """
+aube exec commitlint --from main --to HEAD --config .commitlintrc.mts
+"""
+
+["changelog:generate"]
+description = "Generate CHANGELOG.md from conventional commits"
+run = """
+git-cliff --output CHANGELOG.md
+"""
+
+["changelog:check"]
+description = "Check that generated changelog content is current"
+run = """
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+git-cliff --output "$tmp"
+if [ -s "$tmp" ] && ! cmp --silent "$tmp" CHANGELOG.md; then
+  echo "CHANGELOG.md is out of date; run 'mise run changelog:generate'" >&2
+  exit 1
+fi
+if [ ! -s CHANGELOG.md ]; then
+  echo "CHANGELOG.md is empty" >&2
+  exit 1
+fi
+"""

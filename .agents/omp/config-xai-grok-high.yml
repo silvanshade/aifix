@@ -1,0 +1,18 @@
+compaction:
+  idleEnabled: true
+  idleThresholdTokens: 400000
+  thresholdTokens: -1
+  thresholdPercent: -1
+modelRoles:
+  default: xai-oauth/grok-4.6:high
+  commit: openai-codex/gpt-5.6-luna:high
+  designer: xai-oauth/grok-4.6:high
+  plan: xai-oauth/grok-4.6:high
+  slow: xai-oauth/grok-4.6:high
+  smol: xai-oauth/grok-4.6:max
+  task: xai-oauth/grok-4.6:high
+  vision: xai-oauth/grok-4.6:high
+prewalk:
+  enabled: false
+task:
+  prewalk: false
