@@ -1,3 +1,0 @@
-[submodule ".agents/core"]
-	path = .agents/core
-	url = https://github.com/silvanshade/agentic-dev

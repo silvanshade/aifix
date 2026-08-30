@@ -7,7 +7,6 @@ toml-version = "v1.0.0"
 
 [files]
 exclude = [
-  ".agents/core",
   ".claude/worktrees",
 ]
 respect-ignore-files = true

@@ -28,7 +28,6 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
-          submodules: 'true'
 
       - &install-system-dependencies
         name: install system dependencies
@@ -145,8 +144,6 @@ jobs:
           tools+=("cargo:nu")
           IFS=,; echo "MISE_ENABLE_TOOLS=${tools[*]}" >> $GITHUB_ENV
       - *install-mise-tools
-      - name: check unresolved conflict markers
-        run: mise run docs:conflict-markers
       - name: check docs manifest drift
         run: mise run docs:manifest-drift
 

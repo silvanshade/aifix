@@ -1,6 +1,6 @@
 # Agent Guidance
 
-Compact aifix project delta for coding agents — keep shared doctrine in the core, and keep this file focused on project-specific constraints.
+Compact aifix project delta for coding agents — this file holds project-specific constraints only.
 
 `aifix` is a Rust workspace for an agent-first diagnostic adapter.
 The CLI turns noisy compiler, linter, LSP, and text diagnostics into a normalized digest that coding agents can consume.
@@ -9,17 +9,7 @@ The project name is still tentative until publication; keep the collision caveat
 
 ## Shared core
 
-This repo consumes the **agentic-dev core** as a git submodule at `.agents/core`.
-Read the shared operating doctrine there instead of copying it here:
-
-* `.agents/core/core/PRINCIPLES.md` — operating principles, verification posture, durable state, and publishable-history framing.
-* `.agents/core/core/WORKFLOW.md` — beads/worktree lifecycle, governance docs, session close, adversarial review, documentation economy, and scripting.
-* `.agents/core/core/HAZARDS.md` — shared workflow hazards; skim before destructive or hard-to-reverse operations.
-* `.agents/core/core/PUBLISHABLE-HISTORY.md` — project-concern vs contributor-concern classification for tracked content and commits.
-
-The core is **read-only here**.
-Generic workflow improvements land upstream in agentic-dev, then aifix deliberately bumps the submodule pin.
-Project parameters live in `.agents/conventions.toml` (`project = "aifix"`, Rust/Nushell/TypeScript, Wyrd reference, tracker prefix).
+The shared operating doctrine arrives with the gandr-conventions conformance rework (tracked on silvanshade/vault-gandr#101); until it lands, the gandr-lang/gandr AGENTS chain is the reference.
 
 ## Project delta
 
@@ -51,7 +41,7 @@ Project parameters live in `.agents/conventions.toml` (`project = "aifix"`, Rust
   The project name remains tentative until publication.
 * **Manifest discipline**: when publishing doc edits that affect registered docs, refresh `docs/MANIFEST.toml` hashes with the project formatter/manifest workflow.
   For docs-only agent assignments that explicitly ban formatters or gates, review rendered content instead and report the skipped manifest refresh.
-* **Tracking**: track ongoing work and drift in beads per the core workflow.
+* **Tracking**: track ongoing work and drift in beads.
   Beads that implement or revise decisions should link the relevant ADR entry.
 
 ## Commands and gates

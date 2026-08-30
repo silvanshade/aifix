@@ -1,6 +1,5 @@
 #:tombi toml-version = "v1.0.0"
 
-# Copy-basis: .agents/core/fragments/wt.base.toml.
 # Hook changes require `wt config approvals add`.
 [[pre-start]]
 mise-trust = "mise trust -y {{ worktree_path }}/mise.toml"
@@ -12,16 +11,11 @@ wt-step-copy-gitignored = "wt step copy-ignored"
 beads-chmod = "chmod 0700 .beads"
 
 [[pre-start]]
-core-init = "nu {{ primary_worktree_path }}/.agents/core/scripts/init-submodules-from-primary.nu --primary {{ primary_worktree_path }}"
-
-[[pre-start]]
 beads-pull = "bd dolt pull || true"
 
 [pre-merge]
 # Aifix uses one legacy ADR file, not an ADR directory.
 act-ci = "mise exec -- nu scripts/act-ci.nu --all --rm"
-adr-guard = "nu .agents/core/scripts/check-adr-on-main.nu --adr-path docs/ADR.md"
-core-pin = "nu .agents/core/scripts/check-core-pin.nu"
 beads = "bd dolt pull && bd dolt push"
 
 [post-merge]

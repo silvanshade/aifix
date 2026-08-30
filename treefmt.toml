@@ -5,7 +5,6 @@
 # rewrites. Source, docs, examples, and fixtures remain visible to formatters.
 excludes = [
   ".beads/**",
-  ".agents/core/**",
   ".claude/worktrees/**",
   "build/**",
   "coverage/**",
@@ -16,21 +15,6 @@ excludes = [
   "temp/**",
   "tmp/**",
   "vendor/**",
-]
-
-[formatter."conflict-markers"]
-command = "nu"
-options = [".agents/core/scripts/check-conflict-markers.nu"]
-includes = [
-  "*.json",
-  "*.lock",
-  "*.md",
-  "*.nu",
-  "*.rs",
-  "*.toml",
-  "*.txt",
-  "*.yaml",
-  "*.yml",
 ]
 
 [formatter."docs-manifest-drift"]
