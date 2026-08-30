@@ -7,7 +7,6 @@ line-length = 0
 respect-gitignore = true
 exclude = [
   ".beads",
-  ".agents/core",
   ".claude/worktrees",
   ".git",
   "node_modules",

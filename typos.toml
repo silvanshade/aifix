@@ -4,7 +4,6 @@
 # Vendored agentic-dev core and in-repo agent worktrees are foreign trees
 # (agentic-dev core/HAZARDS.md H13). node_modules is generated.
 extend-exclude = [
-  ".agents/core/",
   ".claude/worktrees/",
   "node_modules/",
 ]

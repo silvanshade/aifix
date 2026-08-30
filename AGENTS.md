@@ -9,17 +9,8 @@ The project name is still tentative until publication; keep the collision caveat
 
 ## Shared core
 
-This repo consumes the **agentic-dev core** as a git submodule at `.agents/core`.
-Read the shared operating doctrine there instead of copying it here:
+The shared operating doctrine arrives with the gandr-conventions conformance rework (tracked on silvanshade/vault-gandr#101); until it lands, the gandr-lang/gandr AGENTS chain is the reference.
 
-* `.agents/core/core/PRINCIPLES.md` — operating principles, verification posture, durable state, and publishable-history framing.
-* `.agents/core/core/WORKFLOW.md` — beads/worktree lifecycle, governance docs, session close, adversarial review, documentation economy, and scripting.
-* `.agents/core/core/HAZARDS.md` — shared workflow hazards; skim before destructive or hard-to-reverse operations.
-* `.agents/core/core/PUBLISHABLE-HISTORY.md` — project-concern vs contributor-concern classification for tracked content and commits.
-
-The core is **read-only here**.
-Generic workflow improvements land upstream in agentic-dev, then aifix deliberately bumps the submodule pin.
-Project parameters live in `.agents/conventions.toml` (`project = "aifix"`, Rust/Nushell/TypeScript, Wyrd reference, tracker prefix).
 
 ## Project delta
 

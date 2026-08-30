@@ -27,7 +27,6 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           persist-credentials: false
-          submodules: 'true'
 
       - &install-rust-tools
         name: install rust tools

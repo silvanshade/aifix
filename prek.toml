@@ -1,7 +1,6 @@
 #:tombi toml-version = "v1.0.0"
 #:schema https://www.schemastore.org/prek.json
 
-# Copy-basis: .agents/core/fragments/prek.base.toml.
 fail_fast = false
 default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 
@@ -19,22 +18,6 @@ pass_filenames = false
 stages = ["pre-commit"]
 
 [[repos.hooks]]
-id = "no-machine-local-paths"
-name = "no machine-local paths in committed content"
-language = "system"
-entry = "mise exec -- nu .agents/core/scripts/check-machine-local-paths.nu"
-stages = ["pre-commit"]
-
-[[repos.hooks]]
-id = "core-pin"
-name = "agentic-dev core submodule initialized, clean, at pin"
-language = "system"
-entry = "mise exec -- nu .agents/core/scripts/check-core-pin.nu"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit"]
-
-[[repos.hooks]]
 id = "commitlint"
 name = "commitlint"
 entry = "mise x -- commitlint --edit"
@@ -42,16 +25,6 @@ language = "system"
 stages = ["commit-msg"]
 always_run = true
 pass_filenames = true
-
-# Aifix pre-commit gates.
-[[repos.hooks]]
-id = "conflict-markers"
-name = "conflict-marker check"
-language = "system"
-entry = "mise exec -- nu .agents/core/scripts/check-conflict-markers.nu"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit"]
 
 [[repos.hooks]]
 id = "treefmt-check"

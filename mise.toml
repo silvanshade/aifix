@@ -87,25 +87,6 @@ run = """
 nu scripts/check-docs-manifest-drift.nu
 """
 
-[tasks."docs:conflict-markers"]
-description = "Detect unresolved Git conflict markers in tracked text files"
-run = """
-nu .agents/core/scripts/check-conflict-markers.nu
-"""
-
-[tasks."core:check"]
-description = "Verify the vendored agentic-dev core submodule is initialized, clean, and at the recorded pin"
-run = """
-nu .agents/core/scripts/check-core-pin.nu
-"""
-
-[tasks."core:update"]
-description = "Bump the vendored agentic-dev core to upstream main (commit the new pin deliberately)"
-run = """
-git submodule update --remote .agents/core
-git status --short .agents/core
-"""
-
 [tasks."changelog:generate"]
 description = "Generate CHANGELOG.md from conventional commits"
 run = """
