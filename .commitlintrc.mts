@@ -12,6 +12,11 @@ const TRAILER_TOKENS = [
   "Refs",
   "Reported-by",
   "Reviewed-by",
+  // The provenance block's own two tokens. Without them the block's first line
+  // reads as prose, so the leading-blank check fires on the line below it
+  // rather than on the block, and an agent commit is refused for a defect it
+  // does not have.
+  "Role",
   "Session",
   "Signed-off-by",
   "Tested-by",
