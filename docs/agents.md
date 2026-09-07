@@ -91,6 +91,35 @@ Bad:
 * Descriptive gestures: "tagless-final paper", "leading implementation".
 * Author-year, no register.
 
+## Publication
+
+Scope: every authored exchange on the tracker — issue and PR bodies, comments, review submissions, inline review comments, replies.
+Reply shape to the user is Operation Economy → Output; this section is the tracker.
+
+Lead with outcome, verdict, request, or blocker; then consequence, decisive evidence, next action.
+Full context = what a reader needs to act, **NEVER** the work history.
+
+* State each fact once.
+  Summary names results and links the detail; it never replays an inventory another surface already carries.
+* Report findings and observed results, **NEVER** the reading, checking, drafting, or deliberation behind them.
+  Method, chronology, and rationale stay only where a reader needs them to interpret evidence, reproduce a result, or decide.
+* Keep every consequential condition, uncertainty, number, exact string, piece of evidence, and unresolved item.
+  Shortening by omission or by cryptic phrasing is not compression.
+
+Same rules bind a reviewer's own submission, inline comments, and replies.
+
+Rejection cites the exact span and the correction:
+
+| Defect              | Citation shows                                               |
+| ------------------- | ------------------------------------------------------------ |
+| duplicated meaning  | both spans, same claim at the same scope                     |
+| narration           | the recounted procedure, no evidential or decision value     |
+| poor prioritization | the buried action, verdict, or blocker, and where it belongs |
+
+Demonstrated defect blocks landing.
+Wording or redundancy preference with no demonstrated defect = note, **NEVER** a rejection.
+Required evidence and context are not padding: no word counts, no generic verbosity verdict, no substitute rewrite.
+
 ## Rust
 
 Conventions for `crates/`: gandr's `docs/agents/rust.md` (design, types, totality, lints, dependencies, documentation by contract) and `docs/agents/testing-contracts.md` (contract-block testing obligations), in `gandr-lang/gandr`.
